@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "topo-geojson"
+version = "0.1.0"
+description = "Convert RDF Turtle topology models (geojson-topo vocabulary) to GeoJSON geometry objects"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "rdflib>=6.0",
+]
+
+[project.scripts]
+topo-geojson = "topo_geojson:_cli"
+
+[tool.setuptools]
+py-modules = ["topo_geojson"]
