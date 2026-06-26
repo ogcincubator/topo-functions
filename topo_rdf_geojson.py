@@ -1,6 +1,6 @@
 """
-topo_geojson.py
-===============
+topo_rdf_geojson.py
+===================
 Reads an RDF Turtle topology model (geojson-topo vocabulary) and returns a
 dict of GeoJSON geometry objects for every feature, indexed by both full URI
 string and qname (prefix:local).
@@ -33,7 +33,7 @@ sequence of the referenced geometry so that edges chain correctly.
 
 Usage
 -----
-    from topo_geojson import load_topo
+    from topo_rdf_geojson import load_topo
 
     geometries = load_topo("path/to/model.ttl")
 

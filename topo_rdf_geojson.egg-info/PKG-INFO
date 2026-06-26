@@ -1,3 +1,12 @@
+Metadata-Version: 2.4
+Name: topo-rdf-geojson
+Version: 0.1.0
+Summary: Convert RDF Turtle topology models (geojson-topo vocabulary) to GeoJSON geometry objects
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: rdflib>=6.0
+
 # topo-rdf-geojson
 
 Reads an RDF Turtle topology model (geojson-topo vocabulary) and returns a dict of GeoJSON geometry objects for every feature, indexed by both full URI string and qname (`prefix:local`).
