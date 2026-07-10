@@ -1,0 +1,76 @@
+{
+  "id": "0",
+  "type": "Feature",
+  "properties": {
+    "appellation": {
+      "label": "Lot 1 DP 572532",
+      "hasPart": [
+        {
+          "type": "PlanType",
+          "label": "DP"
+        },
+        {
+          "type": "PlanIdentifier",
+          "label": "572532"
+        },
+        {
+          "type": "ParcelType",
+          "label": "Lot"
+        },
+        {
+          "type": "ParcelIdentifier",
+          "label": "1"
+        }
+      ]
+    },
+    "area": 484,
+    "parcelType": "eg-parcel-type:l",
+    "parcelPurpose": "eg-parcel-purpose:fst",
+    "parcelState": "eg-parcel-state:created",
+    "class": "eg-parcel-class:allotment",
+    "interests": [
+      {
+        "interestLink": "1040074",
+        "interestType": "eg-interest-type:fh"
+      }
+    ]
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          174.7505,
+          -36.93106
+        ],
+        [
+          174.7507,
+          -36.93102
+        ],
+        [
+          174.7508,
+          -36.93103
+        ],
+        [
+          174.751,
+          -36.93118
+        ],
+        [
+          174.751,
+          -36.9312
+        ],
+        [
+          174.7508,
+          -36.93125
+        ],
+        [
+          174.7505,
+          -36.93106
+        ]
+      ]
+    ]
+  },
+  "@context": [
+    "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
+  ]
+}

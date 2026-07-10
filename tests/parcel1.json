@@ -1,0 +1,52 @@
+{
+  "type": "Feature",
+  "id": "8446454",
+"geometry":  null,
+  "topology": {
+    "type": "Polygon",
+    "references": [
+      [
+        "l535242",
+        "l535759",
+        "l985190",
+        "l952702",
+        "l965727",
+        "l589282"
+      ]
+    ]
+  },
+  "properties": {
+    "appellation": {
+      "label": "Lot 1 DP 572532",
+      "hasPart": [
+        {
+          "type": "PlanType",
+          "label": "DP"
+        },
+        {
+          "type": "PlanIdentifier",
+          "label": "572532"
+        },
+        {
+          "type": "ParcelType",
+          "label": "Lot"
+        },
+        {
+          "type": "ParcelIdentifier",
+          "label": "1"
+        }
+      ]
+    },
+    "area": 484,
+    "parcelType": "eg-parcel-type:l",
+    "parcelPurpose": "eg-parcel-purpose:fst",
+    "parcelState": "eg-parcel-state:created",
+    "class": "eg-parcel-class:allotment",
+    "interests": [
+      {
+        "interestLink": "1040074",
+        "interestType": "eg-interest-type:fh"
+      }
+    ]
+  }
+}
