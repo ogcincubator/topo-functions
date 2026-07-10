@@ -245,7 +245,7 @@ _GEOM_TO_MODE = {
 }
 
 
-def process(input_data, mode: str, number, ttl_geoms=None, ttl_coords=None) -> str:
+def process(input_data, mode="points,edges,faces", number=None, ttl_geoms=None, ttl_coords=None) -> str:
     if ttl_geoms is None:
         ttl_geoms = {}
     if ttl_coords is None:
