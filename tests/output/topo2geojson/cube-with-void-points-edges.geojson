@@ -2,21 +2,7 @@
   "type": "FeatureCollection",
   "features": [
     {
-      "id": "0",
       "type": "Feature",
-      "properties": {
-        "purpose": "wa-surveypoint-purpose:boundary",
-        "ptQualityMeasure": 0.1,
-        "comment": null,
-        "monumentedBy": {
-          "form": "wa-monument-form:cadastral-point-unmarked",
-          "condition": "wa-monument-condition:ok",
-          "state": "wa-monument-state:unmarked"
-        },
-        "feature_id": "uuid:c1a53dd7-865c-4f66-a191-9e21ddf7ed0c",
-        "vectorPurpose": null,
-        "length": null
-      },
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -24,11 +10,7 @@
           -31.88815772870778,
           16.0
         ]
-      }
-    },
-    {
-      "id": "1",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -38,10 +20,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:dc93a50d-142f-4fc5-8ef6-db015696c54d",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:c1a53dd7-865c-4f66-a191-9e21ddf7ed0c"
       },
+      "id": "uuid:c1a53dd7-865c-4f66-a191-9e21ddf7ed0c"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -49,11 +33,7 @@
           -31.888156890609896,
           16.0
         ]
-      }
-    },
-    {
-      "id": "2",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -63,10 +43,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:ff92a0ed-dc52-4d2b-97ed-468ac577fc69",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:dc93a50d-142f-4fc5-8ef6-db015696c54d"
       },
+      "id": "uuid:dc93a50d-142f-4fc5-8ef6-db015696c54d"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -74,11 +56,7 @@
           -31.888247069268285,
           16.0
         ]
-      }
-    },
-    {
-      "id": "3",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -88,10 +66,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:5acf4c17-a093-4132-a56f-eba8ddcd4617",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:ff92a0ed-dc52-4d2b-97ed-468ac577fc69"
       },
+      "id": "uuid:ff92a0ed-dc52-4d2b-97ed-468ac577fc69"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -99,11 +79,7 @@
           -31.888247907369106,
           16.0
         ]
-      }
-    },
-    {
-      "id": "4",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -113,10 +89,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:584d6409-5955-40a0-9e78-f72a68e7ba45",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:5acf4c17-a093-4132-a56f-eba8ddcd4617"
       },
+      "id": "uuid:5acf4c17-a093-4132-a56f-eba8ddcd4617"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -124,11 +102,7 @@
           -31.888247907369106,
           6.0
         ]
-      }
-    },
-    {
-      "id": "5",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -138,10 +112,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:a982fa1d-d5dd-4ccc-be27-f345e6e1be2d",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:584d6409-5955-40a0-9e78-f72a68e7ba45"
       },
+      "id": "uuid:584d6409-5955-40a0-9e78-f72a68e7ba45"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -149,11 +125,7 @@
           -31.88815772870778,
           6.0
         ]
-      }
-    },
-    {
-      "id": "6",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -163,10 +135,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:cd5bc415-92f3-49a9-9dd7-ac7bc9e2aed0",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:a982fa1d-d5dd-4ccc-be27-f345e6e1be2d"
       },
+      "id": "uuid:a982fa1d-d5dd-4ccc-be27-f345e6e1be2d"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -174,11 +148,7 @@
           -31.888156890609896,
           6.0
         ]
-      }
-    },
-    {
-      "id": "7",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -188,10 +158,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:aad5edc3-b7bb-4ade-bebe-401391f98d55",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:cd5bc415-92f3-49a9-9dd7-ac7bc9e2aed0"
       },
+      "id": "uuid:cd5bc415-92f3-49a9-9dd7-ac7bc9e2aed0"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -199,11 +171,7 @@
           -31.888247069268285,
           6.0
         ]
-      }
-    },
-    {
-      "id": "8",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -213,10 +181,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:76089ad4-bb0c-4a22-821a-e0aa84d75250",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:aad5edc3-b7bb-4ade-bebe-401391f98d55"
       },
+      "id": "uuid:aad5edc3-b7bb-4ade-bebe-401391f98d55"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -224,11 +194,7 @@
           -31.888238802965606,
           15.0
         ]
-      }
-    },
-    {
-      "id": "9",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -238,10 +204,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:e369117f-e422-42e0-88e1-5ba968184ff9",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:76089ad4-bb0c-4a22-821a-e0aa84d75250"
       },
+      "id": "uuid:76089ad4-bb0c-4a22-821a-e0aa84d75250"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -249,11 +217,7 @@
           -31.888238132535495,
           15.0
         ]
-      }
-    },
-    {
-      "id": "10",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -263,10 +227,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:a31a7340-6d72-4830-a02d-481fd2c785a7",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:e369117f-e422-42e0-88e1-5ba968184ff9"
       },
+      "id": "uuid:e369117f-e422-42e0-88e1-5ba968184ff9"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -274,11 +240,7 @@
           -31.888165995020888,
           15.0
         ]
-      }
-    },
-    {
-      "id": "11",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -288,10 +250,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:bca76716-1720-4e5f-a212-ca1b7d885919",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:a31a7340-6d72-4830-a02d-481fd2c785a7"
       },
+      "id": "uuid:a31a7340-6d72-4830-a02d-481fd2c785a7"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -299,11 +263,7 @@
           -31.888166656428563,
           15.0
         ]
-      }
-    },
-    {
-      "id": "12",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -313,10 +273,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:130346f2-b5e7-4ff9-a923-529ae6d8242b",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:bca76716-1720-4e5f-a212-ca1b7d885919"
       },
+      "id": "uuid:bca76716-1720-4e5f-a212-ca1b7d885919"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -324,11 +286,7 @@
           -31.888165986000313,
           7.0
         ]
-      }
-    },
-    {
-      "id": "13",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -338,10 +296,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:6fd7bc13-1060-4657-8a7d-b451417c1da5",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:130346f2-b5e7-4ff9-a923-529ae6d8242b"
       },
+      "id": "uuid:130346f2-b5e7-4ff9-a923-529ae6d8242b"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -349,11 +309,7 @@
           -31.888166656428563,
           7.0
         ]
-      }
-    },
-    {
-      "id": "14",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -363,10 +319,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:34f19100-3777-4e4c-a8c3-813b7cc33e2f",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:6fd7bc13-1060-4657-8a7d-b451417c1da5"
       },
+      "id": "uuid:6fd7bc13-1060-4657-8a7d-b451417c1da5"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -374,11 +332,7 @@
           -31.888238132535495,
           7.0
         ]
-      }
-    },
-    {
-      "id": "15",
-      "type": "Feature",
+      },
       "properties": {
         "purpose": "wa-surveypoint-purpose:boundary",
         "ptQualityMeasure": 0.1,
@@ -388,10 +342,12 @@
           "condition": "wa-monument-condition:ok",
           "state": "wa-monument-state:unmarked"
         },
-        "feature_id": "uuid:685eb7a5-2cea-4c3e-b4a7-07c1099fc11a",
-        "vectorPurpose": null,
-        "length": null
+        "feature_id": "uuid:34f19100-3777-4e4c-a8c3-813b7cc33e2f"
       },
+      "id": "uuid:34f19100-3777-4e4c-a8c3-813b7cc33e2f"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "Point",
         "coordinates": [
@@ -399,20 +355,22 @@
           -31.888238802965606,
           7.0
         ]
-      }
+      },
+      "properties": {
+        "purpose": "wa-surveypoint-purpose:boundary",
+        "ptQualityMeasure": 0.1,
+        "comment": null,
+        "monumentedBy": {
+          "form": "wa-monument-form:cadastral-point-unmarked",
+          "condition": "wa-monument-condition:ok",
+          "state": "wa-monument-state:unmarked"
+        },
+        "feature_id": "uuid:685eb7a5-2cea-4c3e-b4a7-07c1099fc11a"
+      },
+      "id": "uuid:685eb7a5-2cea-4c3e-b4a7-07c1099fc11a"
     },
     {
-      "id": "16",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 9.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -427,20 +385,16 @@
             16.0
           ]
         ]
-      }
-    },
-    {
-      "id": "17",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 9.997
       },
+      "id": "uuid:343caf3b-9b7f-4f8b-8ebc-ca8eefef73c2"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -455,20 +409,16 @@
             16.0
           ]
         ]
-      }
-    },
-    {
-      "id": "18",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 9.997
       },
+      "id": "uuid:4e0a6f91-fcda-481e-91a0-e610cf473c05"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -483,20 +433,16 @@
             16.0
           ]
         ]
-      }
-    },
-    {
-      "id": "19",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 9.997
       },
+      "id": "uuid:0b4a0beb-9f17-4b03-8ee7-a53366ff2575"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -511,20 +457,16 @@
             16.0
           ]
         ]
-      }
-    },
-    {
-      "id": "20",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 9.997
       },
+      "id": "uuid:c246401e-8028-4446-bd18-60d5025bc4fe"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -539,48 +481,40 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 9.997
+      },
+      "id": "uuid:4adafeb0-c928-4e73-a427-998ad7529b42"
     },
     {
-      "id": "21",
       "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            115.99215095371282,
+            -31.88815772870778,
+            6.0
+          ],
+          [
+            115.99215095371282,
+            -31.88815772870778,
+            16.0
+          ]
+        ]
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 10.0
       },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [
-          [
-            115.99215095371282,
-            -31.88815772870778,
-            6.0
-          ],
-          [
-            115.99215095371282,
-            -31.88815772870778,
-            16.0
-          ]
-        ]
-      }
+      "id": "uuid:0675457c-d9b8-4d3c-b46f-1faffd1ac73f"
     },
     {
-      "id": "22",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 10.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -595,20 +529,16 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 10.0
+      },
+      "id": "uuid:85097902-68e0-4610-9549-1b4f98840e9d"
     },
     {
-      "id": "23",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 9.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -623,20 +553,16 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 9.997
+      },
+      "id": "uuid:3bec2e40-c6ff-4754-9add-b884a5abe227"
     },
     {
-      "id": "24",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 10.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -651,20 +577,16 @@
             16.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 10.0
+      },
+      "id": "uuid:f676ae46-b987-4c4f-9462-e17e79ba7e17"
     },
     {
-      "id": "25",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 9.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -679,20 +601,16 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 9.997
+      },
+      "id": "uuid:a59df77d-295b-4abb-8cf9-2803bfeaf2d3"
     },
     {
-      "id": "26",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 10.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -707,20 +625,16 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 10.0
+      },
+      "id": "uuid:3e1fcbae-3b7d-44ac-992b-cfb017d310a4"
     },
     {
-      "id": "27",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 9.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -735,20 +649,16 @@
             6.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 9.997
+      },
+      "id": "uuid:b5b28929-5c1d-4b5c-9408-abae2675bfbe"
     },
     {
-      "id": "28",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -763,20 +673,16 @@
             15.0
           ]
         ]
-      }
-    },
-    {
-      "id": "29",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 7.997
       },
+      "id": "uuid:15c3acaf-9d17-4e76-9143-5b5bee68ad6d"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -791,20 +697,16 @@
             15.0
           ]
         ]
-      }
-    },
-    {
-      "id": "30",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 7.997
       },
+      "id": "uuid:0f08271d-c957-4dc6-b5f4-7131d8eaae66"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -819,20 +721,16 @@
             15.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.997
+      },
+      "id": "uuid:d1c150ed-22ba-467f-9910-47e02270d1cc"
     },
     {
-      "id": "31",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.998
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -847,20 +745,16 @@
             15.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.998
+      },
+      "id": "uuid:d87409cb-0a15-4f8c-b699-ced8646209e9"
     },
     {
-      "id": "32",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 8.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -875,20 +769,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 8.0
+      },
+      "id": "uuid:9ca17a2a-5cee-4fff-bab1-cf31ab10a3f7"
     },
     {
-      "id": "33",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -903,20 +793,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.997
+      },
+      "id": "uuid:86f5c73e-d4bc-4f90-9b1a-7ed4a94aec01"
     },
     {
-      "id": "34",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 8.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -931,20 +817,16 @@
             15.0
           ]
         ]
-      }
-    },
-    {
-      "id": "35",
-      "type": "Feature",
+      },
       "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
         "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
         "length": 8.0
       },
+      "id": "uuid:12c695b9-3ed6-4ae4-8f8f-c3420b734ad4"
+    },
+    {
+      "type": "Feature",
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -959,20 +841,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 8.0
+      },
+      "id": "uuid:ff79a0ca-ccf6-4b63-b0b4-fb8224c5a07e"
     },
     {
-      "id": "36",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.998
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -987,20 +865,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.998
+      },
+      "id": "uuid:6bc33b70-ee8a-462a-833f-6714955dcf98"
     },
     {
-      "id": "37",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 8.0
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -1015,20 +889,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 8.0
+      },
+      "id": "uuid:2dcbbeca-bb0c-4754-a671-f2dede3e6e27"
     },
     {
-      "id": "38",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.997
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -1043,20 +913,16 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.997
+      },
+      "id": "uuid:97889c20-8e0c-478c-887c-c5f79f07610d"
     },
     {
-      "id": "39",
       "type": "Feature",
-      "properties": {
-        "purpose": null,
-        "ptQualityMeasure": null,
-        "comment": null,
-        "monumentedBy": null,
-        "feature_id": null,
-        "vectorPurpose": "wa-vector-purpose:3D-Construct",
-        "length": 7.998
-      },
       "geometry": {
         "type": "LineString",
         "coordinates": [
@@ -1071,7 +937,13 @@
             7.0
           ]
         ]
-      }
+      },
+      "properties": {
+        "vectorPurpose": "wa-vector-purpose:3D-Construct",
+        "comment": null,
+        "length": 7.998
+      },
+      "id": "uuid:d9ae1487-c4dc-4fc1-90f4-ea4e4cee40d4"
     }
   ],
   "@context": [

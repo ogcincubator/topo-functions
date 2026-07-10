@@ -15,10 +15,10 @@ dependencies = [
 
 [project.optional-dependencies]
 geojson = [
-    "geopandas>=0.14",
+    "pyproj>=3.5",
 ]
 test = [
-    "geopandas>=0.14",
+    "pyproj>=3.5",
     "pytest>=7.0",
 ]
 

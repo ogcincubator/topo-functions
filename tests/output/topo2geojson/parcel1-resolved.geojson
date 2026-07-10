@@ -1,40 +1,5 @@
 {
-  "id": "0",
   "type": "Feature",
-  "properties": {
-    "appellation": {
-      "label": "Lot 1 DP 572532",
-      "hasPart": [
-        {
-          "type": "PlanType",
-          "label": "DP"
-        },
-        {
-          "type": "PlanIdentifier",
-          "label": "572532"
-        },
-        {
-          "type": "ParcelType",
-          "label": "Lot"
-        },
-        {
-          "type": "ParcelIdentifier",
-          "label": "1"
-        }
-      ]
-    },
-    "area": 484,
-    "parcelType": "eg-parcel-type:l",
-    "parcelPurpose": "eg-parcel-purpose:fst",
-    "parcelState": "eg-parcel-state:created",
-    "class": "eg-parcel-class:allotment",
-    "interests": [
-      {
-        "interestLink": "1040074",
-        "interestType": "eg-interest-type:fh"
-      }
-    ]
-  },
   "geometry": {
     "type": "Polygon",
     "coordinates": [
@@ -70,6 +35,41 @@
       ]
     ]
   },
+  "properties": {
+    "appellation": {
+      "label": "Lot 1 DP 572532",
+      "hasPart": [
+        {
+          "type": "PlanType",
+          "label": "DP"
+        },
+        {
+          "type": "PlanIdentifier",
+          "label": "572532"
+        },
+        {
+          "type": "ParcelType",
+          "label": "Lot"
+        },
+        {
+          "type": "ParcelIdentifier",
+          "label": "1"
+        }
+      ]
+    },
+    "area": 484,
+    "parcelType": "eg-parcel-type:l",
+    "parcelPurpose": "eg-parcel-purpose:fst",
+    "parcelState": "eg-parcel-state:created",
+    "class": "eg-parcel-class:allotment",
+    "interests": [
+      {
+        "interestLink": "1040074",
+        "interestType": "eg-interest-type:fh"
+      }
+    ]
+  },
+  "id": "8446454",
   "@context": [
     "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
   ]

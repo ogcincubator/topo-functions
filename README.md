@@ -10,7 +10,7 @@ Two modules for converting topology-based feature models to GeoJSON:
 ```bash
 pip install topo-rdf-geojson
 
-# topo2geojson also needs geopandas; install the extra to get it:
+# topo2geojson also needs pyproj (for CRS reprojection); install the extra to get it:
 pip install topo-rdf-geojson[geojson]
 ```
 
@@ -78,7 +78,39 @@ with open("parcel1.json") as fh:
                       ttl_geoms=ttl_geoms, ttl_coords=ttl_coords)
 ```
 
-`process()` returns a GeoJSON string (a `Feature` if the input was a single Feature, otherwise a `FeatureCollection`).
+`process()` returns a GeoJSON string (a `Feature` if the input was a single Feature, otherwise a `FeatureCollection`). If the input declares a GeoJSON `crs` member (e.g. `{"type": "name", "properties": {"name": "EPSG:7850"}}`), the output geometries are reprojected to WGS84 (EPSG:4326) using [pyproj](https://pyproj4.github.io/pyproj/) — no geopandas/shapely/GDAL required.
+
+### Use as an OGC Building Blocks transform
+
+`topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention: a host `exec`s the file with two globals already bound —
+
+- `input_data` — the raw input document (a JSON string or file-like object) to convert
+- `transform_metadata` — an object exposing `.metadata`, a dict of parameters for this transform run:
+  - `"mode"` — same comma-separated feature-type list as the CLI `-m` flag (default `"points,edges,faces"`)
+  - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
+
+The script leaves its result in the `output_data` global as a GeoJSON string, annotated with the bblocks `featureCollection` context. To exercise this locally (e.g. from a bblocks transform harness or your own test), bind the globals and `exec` the module:
+
+```python
+import types
+
+transform_metadata = types.SimpleNamespace(metadata={
+    "mode": "faces",
+    "ttl": "tests/topoobjects.ttl",
+})
+with open("tests/parcel1.json") as fh:
+    input_data = fh.read()
+
+ns = {
+    "transform_metadata": transform_metadata,
+    "input_data": input_data,
+    "__name__": "topo2geojson_transform",
+}
+exec(open("topo2geojson.py").read(), ns)
+output_data = ns["output_data"]
+```
+
+This path is only taken when `transform_metadata` is present in the executing namespace, so a plain `import topo2geojson` (as used by the CLI and the test suite) never triggers it.
 
 ### CLI
 
@@ -117,4 +149,4 @@ Tests persist the GeoJSON they generate under `tests/output/`, split by submodul
 ## Dependencies
 
 - [rdflib](https://rdflib.readthedocs.io/) >= 6.0 (both modules)
-- [geopandas](https://geopandas.org/) >= 0.14 (`topo2geojson` only; install via the `geojson` extra)
+- [pyproj](https://pyproj4.github.io/pyproj/) >= 3.5 (`topo2geojson` only, for CRS reprojection; install via the `geojson` extra)

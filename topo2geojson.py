@@ -17,7 +17,7 @@ import json
 import glob as glob_module
 from typing import Generator, List
 
-import geopandas as gpd
+from pyproj import Transformer
 
 from topo_rdf_geojson import load_topo
 
@@ -195,6 +195,44 @@ def _resolve_inline_topology(topo: dict, geomsmap: dict,
 
 
 # ---------------------------------------------------------------------------
+# CRS reprojection / GeoJSON serialization helpers (no geopandas required)
+# ---------------------------------------------------------------------------
+
+def _reproject_coords(coords: list, transformer: Transformer) -> list:
+    """Recursively reproject every [x, y] or [x, y, z] leaf in a coordinates tree."""
+    if not coords:
+        return coords
+    if isinstance(coords[0], (int, float)):
+        x, y = transformer.transform(coords[0], coords[1])
+        return [x, y, *coords[2:]]
+    return [_reproject_coords(c, transformer) for c in coords]
+
+
+def _reproject_geometry(geom: dict | None, transformer: Transformer) -> None:
+    """Reproject a GeoJSON geometry dict in place (handles GeometryCollection too)."""
+    if not geom:
+        return
+    if geom.get("type") == "GeometryCollection":
+        for g in geom.get("geometries", []):
+            _reproject_geometry(g, transformer)
+    elif "coordinates" in geom:
+        geom["coordinates"] = _reproject_coords(geom["coordinates"], transformer)
+
+
+def _clean_feature(feat: dict) -> dict:
+    """Strip internal-only keys (e.g. `topology`, the stray `properties` some
+    geometry dicts carry) down to a plain GeoJSON Feature."""
+    geometry = feat.get("geometry")
+    clean_geom = None
+    if geometry is not None:
+        clean_geom = {k: v for k, v in geometry.items() if k in ("type", "coordinates", "geometries")}
+    clean = {"type": "Feature", "geometry": clean_geom, "properties": feat.get("properties", {})}
+    if "id" in feat:
+        clean["id"] = feat["id"]
+    return clean
+
+
+# ---------------------------------------------------------------------------
 # Main processing
 # ---------------------------------------------------------------------------
 
@@ -353,23 +391,19 @@ def process(input_data, mode: str, number, ttl_geoms=None, ttl_coords=None) -> s
         print("No feature geometries generated")
         return "{}"
 
-    gdf = gpd.GeoDataFrame.from_features(data["features"])
+    clean_features = [_clean_feature(f) for f in data["features"]]
 
-    if epsg_code:
-        gdf.set_crs(epsg=int(epsg_code), inplace=True)
-    print("Transform from CRS" + str(gdf.crs))
-
+    print(f"Source CRS EPSG:{epsg_code}")
     if epsg_code != "4326":
-        gdf = gdf.to_crs(epsg=4326)
-        print("            to CRS" + str(gdf.crs))
+        transformer = Transformer.from_crs(f"EPSG:{epsg_code}", "EPSG:4326", always_xy=True)
+        for feature in clean_features:
+            _reproject_geometry(feature.get("geometry"), transformer)
+        print("Transformed to EPSG:4326")
 
-    result = json.loads(gdf.to_json())
     if is_feature:
-        outputstr = json.dumps(result["features"][0], indent=2)
+        output_data = clean_features[0]
     else:
-        outputstr = gdf.to_json(indent=2)
-
-    output_data = json.loads(outputstr)
+        output_data = {"type": "FeatureCollection", "features": clean_features}
     output_data["@context"] = [
         "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
     ]

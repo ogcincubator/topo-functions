@@ -72,3 +72,27 @@ def test_parcel1_resolved_via_ttl():
     ring = data["geometry"]["coordinates"][0]
     assert ring[0] == ring[-1]      # closed ring
     assert len(ring) == 7           # 6 boundary vertices + closing point
+
+
+def test_reprojects_non_wgs84_input_via_pyproj():
+    """Neither fixture declares a GeoJSON `crs` object, so this exercises the
+    pyproj-based reprojection path (replacing geopandas) with a synthetic
+    input. Expected lon/lat is cube-with-void.json's own paired value for
+    this same point: "geometry" is the WGS84 form of "place"'s EPSG:7850
+    easting/northing (404685.707, 6471518.197)."""
+    feature = {
+        "type": "Feature",
+        "id": "reproj-check",
+        "crs": {"type": "name", "properties": {"name": "EPSG:7850"}},
+        "geometry": {"type": "Point", "coordinates": [404685.707, 6471518.197, 16.0]},
+        "properties": {},
+    }
+
+    output = process(json.dumps(feature), mode="points", number=None)
+    _persist("reprojected-point.geojson", output)
+
+    data = json.loads(output)
+    lon, lat, elev = data["geometry"]["coordinates"]
+    assert lon == pytest.approx(115.99215095371282, abs=1e-9)
+    assert lat == pytest.approx(-31.88815772870778, abs=1e-9)
+    assert elev == 16.0     # z is untouched by the 2D horizontal transform
