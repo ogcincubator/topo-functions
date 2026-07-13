@@ -82,35 +82,35 @@ with open("parcel1.json") as fh:
 
 ### Use as an OGC Building Blocks transform
 
-`topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention: a host `exec`s the file with two globals already bound —
+`topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention: this is executes with two globals already bound —
 
 - `input_data` — the raw input document (a JSON string or file-like object) to convert
 - `transform_metadata` — an object exposing `.metadata`, a dict of parameters for this transform run:
   - `"mode"` — same comma-separated feature-type list as the CLI `-m` flag (default `"points,edges,faces"`)
   - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
 
-The script leaves its result in the `output_data` global as a GeoJSON string, annotated with the bblocks `featureCollection` context. To exercise this locally (e.g. from a bblocks transform harness or your own test), bind the globals and `exec` the module:
+The script leaves its result in the `output_data` global as a GeoJSON string, annotated with the bblocks' context. 
 
-```python
-import types
-
-transform_metadata = types.SimpleNamespace(metadata={
-    "mode": "faces",
-    "ttl": "tests/topoobjects.ttl",
-})
-with open("tests/parcel1.json") as fh:
-    input_data = fh.read()
-
-ns = {
-    "transform_metadata": transform_metadata,
-    "input_data": input_data,
-    "__name__": "topo2geojson_transform",
-}
-exec(open("topo2geojson.py").read(), ns)
-output_data = ns["output_data"]
+The transform configuration looks like this:
+```yaml
+transforms:
+  - id: Faces-as-Polygons
+    description: extract GeoJSON Polygons for faces (and example of usage)
+    type: python
+    inputs:
+      mediaTypes: [ application/json ]
+    outputs:
+      mediaTypes: [ application/geo+json ]
+    metadata:
+      dependencies:
+        pip: [git+https://github.com/ogcincubator/topo-functions.git ]
+        python: ">=3.10"   # optional; skipped if not met
+      ttl: test.ttl
+    code: |
+      from topo2geojson import process
+      output_data = process(input_data, mode="faces", number=None)
 ```
 
-This path is only taken when `transform_metadata` is present in the executing namespace, so a plain `import topo2geojson` (as used by the CLI and the test suite) never triggers it.
 
 ### CLI
 
