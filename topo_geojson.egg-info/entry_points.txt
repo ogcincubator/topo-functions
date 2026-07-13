@@ -1,2 +1,0 @@
-[console_scripts]
-topo-geojson = topo_geojson:_cli

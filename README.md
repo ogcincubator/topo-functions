@@ -82,14 +82,22 @@ with open("parcel1.json") as fh:
 
 ### Use as an OGC Building Blocks transform
 
-`topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention: this is executes with two globals already bound —
+`topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention, which runs with two values already bound —
 
 - `input_data` — the raw input document (a JSON string or file-like object) to convert
 - `transform_metadata` — an object exposing `.metadata`, a dict of parameters for this transform run:
   - `"mode"` — same comma-separated feature-type list as the CLI `-m` flag (default `"points,edges,faces"`)
   - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
 
-The script leaves its result in the `output_data` global as a GeoJSON string, annotated with the bblocks' context. 
+Call `run_transform()` to get the GeoJSON string to bind to `output_data`. Both arguments are optional — if omitted, they're picked up from `input_data`/`transform_metadata` globals (e.g. a host that `exec`s the whole module, or one that sets them as module attributes after importing it):
+
+```python
+from topo2geojson import run_transform
+
+output_data = run_transform(input_data, transform_metadata)   # explicit args
+# or, if a host has already bound input_data/transform_metadata as globals:
+output_data = run_transform()
+```
 
 The transform configuration looks like this:
 ```yaml
@@ -106,9 +114,10 @@ transforms:
         pip: [git+https://github.com/ogcincubator/topo-functions.git ]
         python: ">=3.10"   # optional; skipped if not met
       ttl: test.ttl
+      mode: faces
     code: |
-      from topo2geojson import process
-      output_data = process(input_data, mode="faces", number=None)
+      from topo2geojson import run_transform
+      output_data = run_transform()
 ```
 
 

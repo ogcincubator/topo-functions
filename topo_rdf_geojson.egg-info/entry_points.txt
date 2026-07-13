@@ -1,2 +1,0 @@
-[console_scripts]
-topo-rdf-geojson = topo_rdf_geojson:_cli

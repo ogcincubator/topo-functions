@@ -419,11 +419,35 @@ def process(input_data, mode="points,edges,faces", number=None, ttl_geoms=None, 
 # ---------------------------------------------------------------------------
 # Host integration (FME PythonCaller-style transformer script)
 # ---------------------------------------------------------------------------
-# A transform host execs this module with `transform_metadata` and
-# `input_data` already bound as globals. Guard on their presence so that a
-# plain `import topo2geojson` (e.g. from tests) stays side-effect free.
+# A transform host either execs this module with `transform_metadata` and
+# `input_data` already bound as globals, or imports it and calls
+# run_transform(input_data, transform_metadata) directly.
 
-if "transform_metadata" in globals():
+def run_transform(input_data=None, transform_metadata=None) -> str:
+    """
+    Entry point for OGC Building Blocks-style transform hosts.
+
+    `transform_metadata` exposes `.metadata`, a dict with:
+      - "mode": comma-separated feature-type list (default "points,edges,faces")
+      - "ttl":  a TTL path, glob pattern, or list of either, providing
+                topology for features referenced but not defined inline
+
+    Both arguments are optional: a host that execs this module with
+    `input_data`/`transform_metadata` already bound as globals doesn't need
+    to pass them explicitly — they're picked up from globals when omitted.
+
+    Returns the GeoJSON string a host should bind to `output_data`.
+    """
+    if input_data is None:
+        input_data = globals().get("input_data")
+    if transform_metadata is None:
+        transform_metadata = globals().get("transform_metadata")
+    if input_data is None or transform_metadata is None:
+        raise RuntimeError(
+            "run_transform() requires input_data and transform_metadata, "
+            "either as arguments or as globals bound by the host."
+        )
+
     mode = transform_metadata.metadata.get("mode", "points,edges,faces")
 
     ttl_geoms_tm: dict = {}
@@ -437,7 +461,14 @@ if "transform_metadata" in globals():
         ttl_geoms_tm, ttl_coords_tm = load_ttl_geoms(expanded)
 
     print("running in transformer mode")
-    output_data = process(input_data, mode, None, ttl_geoms_tm, ttl_coords_tm)
+    return process(input_data, mode, None, ttl_geoms_tm, ttl_coords_tm)
+
+
+# Guard on `transform_metadata`'s presence so that a plain `import
+# topo2geojson` (e.g. from tests, or from a host calling run_transform()
+# itself) stays side-effect free.
+if "transform_metadata" in globals():
+    output_data = run_transform()
 
 
 # ---------------------------------------------------------------------------
