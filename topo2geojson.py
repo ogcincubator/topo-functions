@@ -439,9 +439,12 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     Returns the GeoJSON string a host should bind to `output_data`.
     """
     if input_data is None:
+        print("seeking input_data in globals")
         input_data = globals().get("input_data")
+        print("found input_data in globals")
     if transform_metadata is None:
         transform_metadata = globals().get("transform_metadata")
+        print("found metadata in globals")
     if input_data is None or transform_metadata is None:
         raise RuntimeError(
             "run_transform() requires input_data and transform_metadata, "
