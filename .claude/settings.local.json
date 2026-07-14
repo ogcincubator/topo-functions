@@ -3,7 +3,8 @@
     "allow": [
       "Bash(pip show *)",
       "Bash(python -c \"import pkgutil,sys; [print\\(m.name\\) for m in pkgutil.iter_modules\\(\\) if 'bblock' in m.name.lower\\(\\)]\")",
-      "Bash(python -m pytest tests/test_topo2geojson.py -q)"
+      "Bash(python -m pytest tests/test_topo2geojson.py -q)",
+      "Bash(python *)"
     ]
   }
 }

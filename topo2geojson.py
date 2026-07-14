@@ -165,13 +165,22 @@ def _resolve_inline_topology(topo: dict, geomsmap: dict,
                         rings.append(geom.get("coordinates", []))
             return {"type": "Polygon", "coordinates": rings} if rings else None
 
-        elif topo_type == "linestring":
+        elif topo_type in ("linestring", "edge"):
             pts = [c for r in refs if (c := lookup_coords(r)) is not None]
             return {"type": "LineString", "coordinates": pts} if len(pts) >= 2 else None
 
         else:
+            # Any other topology type (e.g. "Point", "Ring", "Face", "Shell",
+            # "Solid") reaching here still carries a flat point-id reference
+            # list, so the only valid GeoJSON shapes are Point or LineString —
+            # never echo the topology-vocabulary type name itself as the
+            # GeoJSON "type" (it isn't one).
             pts = [c for r in refs if (c := lookup_coords(r)) is not None]
-            return {"type": topo.get("type", "Unknown"), "coordinates": pts} if pts else None
+            if not pts:
+                return None
+            if len(pts) == 1:
+                return {"type": "Point", "coordinates": pts[0]}
+            return {"type": "LineString", "coordinates": pts}
 
     elif "directed_references" in topo:
         drs = topo["directed_references"]
