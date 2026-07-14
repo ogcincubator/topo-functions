@@ -475,6 +475,23 @@ if "transform_metadata" in globals():
 
 
 # ---------------------------------------------------------------------------
+# bblocks plugin interface
+# ---------------------------------------------------------------------------
+# A bblocks plugin host discovers transform_types/default_inputs/
+# default_outputs on the class and calls transform(metadata), where metadata
+# exposes `.input_data` and the same `.metadata` dict run_transform() reads
+# ("mode", "ttl").
+
+class Topo2GeoJsonTransform:
+    transform_types = ["topo2geojson"]
+    default_inputs = ["application/json"]
+    default_outputs = ["application/geo+json"]
+
+    def transform(self, metadata):
+        return run_transform(metadata.input_data, metadata)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 

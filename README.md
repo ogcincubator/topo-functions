@@ -99,6 +99,19 @@ output_data = run_transform(input_data, transform_metadata)   # explicit args
 output_data = run_transform()
 ```
 
+Hosts that discover transforms as installed plugin classes (rather than `exec`ing a `code:` snippet) can instead use `Topo2GeoJsonTransform`:
+
+```python
+from topo2geojson import Topo2GeoJsonTransform
+
+plugin = Topo2GeoJsonTransform()
+plugin.transform_types    # ["topo2geojson"]
+plugin.default_inputs     # ["application/json"]
+plugin.default_outputs    # ["application/geo+json"]
+
+output_data = plugin.transform(metadata)   # metadata.input_data + metadata.metadata (mode/ttl)
+```
+
 The transform configuration looks like this:
 ```yaml
 transforms:
