@@ -1,0 +1,116 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.7505,
+            -36.93106
+          ],
+          [
+            174.7507,
+            -36.93102
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l535242"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.7507,
+            -36.93102
+          ],
+          [
+            174.7508,
+            -36.93103
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l535759"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.7508,
+            -36.93103
+          ],
+          [
+            174.751,
+            -36.93118
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l985190"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.751,
+            -36.93118
+          ],
+          [
+            174.751,
+            -36.9312
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l952702"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.751,
+            -36.9312
+          ],
+          [
+            174.7508,
+            -36.93125
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l965727"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            174.7505,
+            -36.93106
+          ],
+          [
+            174.7508,
+            -36.93125
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/l589282"
+    }
+  ],
+  "@context": [
+    "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
+  ]
+}

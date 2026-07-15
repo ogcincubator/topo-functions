@@ -58,11 +58,12 @@ def test_parcel1_without_ttl_cannot_be_resolved():
 
 
 def test_parcel1_resolved_via_ttl():
-    ttl_geoms, ttl_coords = load_ttl_geoms([str(TTL_FILE)])
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(TTL_FILE)])
 
     with PARCEL_FILE.open() as fh:
         output = process(fh, mode="faces", number=None,
-                          ttl_geoms=ttl_geoms, ttl_coords=ttl_coords)
+                          ttl_geoms=ttl_geoms, ttl_coords=ttl_coords,
+                          ttl_components=ttl_components)
 
     _persist("parcel1-resolved.geojson", output)
 
@@ -73,6 +74,68 @@ def test_parcel1_resolved_via_ttl():
     ring = data["geometry"]["coordinates"][0]
     assert ring[0] == ring[-1]      # closed ring
     assert len(ring) == 7           # 6 boundary vertices + closing point
+
+
+def test_parcel1_edges_mode_decomposes_the_polygon_via_ttl_components():
+    """parcel1.json only ever resolves as a single Face/Polygon (there's no
+    top-level edges/points collection of its own), so -m edges must
+    decompose that polygon down to its constituent edges rather than
+    yielding nothing."""
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(TTL_FILE)])
+
+    with PARCEL_FILE.open() as fh:
+        output = process(fh, mode="edges", number=None,
+                          ttl_geoms=ttl_geoms, ttl_coords=ttl_coords,
+                          ttl_components=ttl_components)
+
+    _persist("parcel1-edges.geojson", output)
+
+    data = json.loads(output)
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) == 6
+    for feature in data["features"]:
+        assert feature["geometry"]["type"] == "LineString"
+
+
+def test_parcel1_points_mode_decomposes_the_polygon_via_ttl_components():
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(TTL_FILE)])
+
+    with PARCEL_FILE.open() as fh:
+        output = process(fh, mode="points", number=None,
+                          ttl_geoms=ttl_geoms, ttl_coords=ttl_coords,
+                          ttl_components=ttl_components)
+
+    _persist("parcel1-points.geojson", output)
+
+    data = json.loads(output)
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) == 6
+    for feature in data["features"]:
+        assert feature["geometry"]["type"] == "Point"
+
+
+def test_cube_with_void_shells_and_solids_resolve_to_multipolygon():
+    """shells/solids weren't previously processed at all: solids carry their
+    directed refs under a "shells" key (not "directed_references"), and the
+    type mapping used the invalid GeoJSON type "Solid"."""
+    with CUBE_FILE.open() as fh:
+        shells_output = process(fh, mode="shells", number=None)
+    with CUBE_FILE.open() as fh:
+        solids_output = process(fh, mode="solids", number=None)
+
+    _persist("cube-with-void-shells.geojson", shells_output)
+    _persist("cube-with-void-solids.geojson", solids_output)
+
+    shells_data = json.loads(shells_output)
+    solids_data = json.loads(solids_output)
+
+    shell_features = shells_data["features"] if shells_data["type"] == "FeatureCollection" else [shells_data]
+    solid_features = solids_data["features"] if solids_data["type"] == "FeatureCollection" else [solids_data]
+
+    assert shell_features
+    assert solid_features
+    for feature in shell_features + solid_features:
+        assert feature["geometry"]["type"] == "MultiPolygon"
 
 
 def test_reprojects_non_wgs84_input_via_pyproj():

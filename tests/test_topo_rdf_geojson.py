@@ -2,7 +2,7 @@
 import json
 
 from conftest import RDF_OUTPUT_DIR, TESTS_DIR
-from topo_rdf_geojson import load_topo
+from topo_rdf_geojson import load_topo, load_topo_components
 
 TTL_FILE = TESTS_DIR / "topoobjects.ttl"
 
@@ -35,3 +35,16 @@ def test_load_topo_indexes_by_both_uri_and_qname():
 
     uri_key = "http://csdm-example-surveys/DP-572532/8446454"
     assert geoms[uri_key] is geoms["eg2:8446454"]
+
+
+def test_load_topo_components_decomposes_face_to_its_edges_and_points():
+    """The parcel (a Face, one ring of 6 edges) should decompose down to its
+    6 constituent edges and 6 constituent points, even though load_topo()
+    itself only ever exposes the flattened Polygon."""
+    components = load_topo_components(str(TTL_FILE))
+
+    comps = components["eg2:8446454"]
+    assert len(comps["edges"]) == 6
+    assert len(comps["points"]) == 6
+    assert all(g["type"] == "LineString" for g in comps["edges"].values())
+    assert all(g["type"] == "Point" for g in comps["points"].values())

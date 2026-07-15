@@ -1,0 +1,80 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.7505,
+          -36.93106
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/49655171"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.7507,
+          -36.93102
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/49655173"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.7508,
+          -36.93103
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/49655172"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.751,
+          -36.93118
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/49655187"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.751,
+          -36.9312
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/49655170"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          174.7508,
+          -36.93125
+        ]
+      },
+      "properties": {},
+      "id": "http://csdm-example-surveys/DP-572532/29960715"
+    }
+  ],
+  "@context": [
+    "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
+  ]
+}

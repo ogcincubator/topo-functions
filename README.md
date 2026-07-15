@@ -145,7 +145,9 @@ topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [
 | `-i`, `--input_data` | Input JSON file (supports glob) |
 | `-t`, `--ttl` | TTL file providing topology for referenced features (repeatable, supports glob) |
 | `-o`, `--output_file` | Output GeoJSON file |
-| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces` (default: `points,edges,faces`) |
+| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces`, `shells`, `solids` (default: `points,edges,faces`) |
+
+A feature that only ever resolves as a single Polygon or MultiPolygon (a Ring/Face, or a Shell/Solid several levels deeper — typically one whose topology is entirely TTL-referenced, with no top-level `points`/`edges` collection of its own) is still a valid source for `-m edges`/`-m points`: it's decomposed down to the edges/points that make it up, however many Ring/Face/Shell/Solid levels sit in between, rather than yielding nothing for those modes.
 | `-n`, `--number` | Max number of features to include |
 | `-p`, `--print` | Print output to stdout |
 

@@ -95,6 +95,7 @@ class _TopoResolver:
     def __init__(self, g: Graph) -> None:
         self.g = g
         self._cache: dict[str, Any] = {}
+        self._components_cache: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # RDF helpers
@@ -455,6 +456,90 @@ class _TopoResolver:
             all_polys.extend(self._shell_polygons(shell_uri, orient))
         return {"type": "MultiPolygon", "coordinates": all_polys} if all_polys else None
 
+    # ------------------------------------------------------------------
+    # Component decomposition — recursively flatten a feature's topology
+    # (at any depth: Solid > Shells > Faces > Rings > Edges > Points) down
+    # to its terminal Edge/Point features, regardless of the feature's own
+    # order (Ring/Face → Polygon, Shell/Solid → MultiPolygon all decompose
+    # the same way).
+    # ------------------------------------------------------------------
+
+    def components(self, feature_uri: URIRef) -> dict[str, dict[str, dict]]:
+        """
+        Return {"edges": {id: LineString-geom}, "points": {id: Point-geom}}
+        for every Edge/Point feature reachable from *feature_uri*'s topology,
+        however many Ring/Face/Shell/Solid levels sit in between.
+        """
+        uri_str = str(feature_uri)
+        if uri_str in self._components_cache:
+            return self._components_cache[uri_str]
+
+        edges: dict[str, dict] = {}
+        points: dict[str, dict] = {}
+        visited: set = set()
+
+        def visit(uri: URIRef) -> None:
+            key = str(uri)
+            if key in visited:
+                return
+            visited.add(key)
+
+            topo_node = self.g.value(uri, GEOJSON.topology)
+            if topo_node is None:
+                pt = self._point_coords(uri)
+                if pt is not None:
+                    points[key] = {"type": "Point", "coordinates": pt}
+                return
+
+            topo_type = self.g.value(topo_node, RDF.type)
+
+            if topo_type in (_TOPO_EDGE, _GJ_LINESTRING):
+                geom = self._resolve_edge(topo_node)
+                if geom:
+                    edges[key] = geom
+                rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+                for ref in self._items(rf_node):
+                    visit(URIRef(str(ref)))
+                return
+
+            if topo_type == _TOPO_RING:
+                dr_node = self.g.value(topo_node, TOPO.directedReferences)
+                for _orient, edge_uri in self._directed_refs(dr_node):
+                    visit(edge_uri)
+                return
+
+            if topo_type == _TOPO_FACE:
+                dr_node = self.g.value(topo_node, TOPO.directedReferences)
+                for _orient, ring_uri in self._directed_refs(dr_node):
+                    visit(ring_uri)
+                return
+
+            if topo_type == _TOPO_SHELL:
+                dr_node = self.g.value(topo_node, TOPO.directedReferences)
+                for _orient, face_uri in self._directed_refs(dr_node):
+                    visit(face_uri)
+                return
+
+            if topo_type == _TOPO_SOLID:
+                shells_node = self.g.value(topo_node, TOPO.shells)
+                for _orient, shell_uri in self._directed_refs(shells_node):
+                    visit(shell_uri)
+                return
+
+            if topo_type == _GJ_POLYGON:
+                rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+                for ring_node in self._items(rf_node):
+                    edge_nodes = (self._items(ring_node)
+                                  if self._is_list_head(ring_node) else [ring_node])
+                    for edge_uri in edge_nodes:
+                        visit(URIRef(str(edge_uri)))
+                return
+
+        visit(feature_uri)
+        result = {"edges": edges, "points": points}
+        self._components_cache[uri_str] = result
+        return result
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -486,14 +571,73 @@ def load_topo(source, *, include_collections=False):
     >>> geoms["eg2:8446454"]
     {'type': 'Polygon', 'coordinates': [[[174.7508, -36.93141], ...]]}
     """
-    if isinstance(source, Graph):
-        g = source
-    else:
-        g = Graph()
-        g.parse(source, format="turtle")
-
+    g = _load_graph(source)
     resolver = _TopoResolver(g)
+    feature_uris = _feature_uris(g, include_collections)
+    qname_of = _qname_fn(g)
 
+    result = {}
+    for uri in feature_uris:
+        geom = resolver.geometry(uri)
+        if geom is None:
+            continue
+        uri_str = str(uri)
+        result[uri_str] = geom
+        qn = qname_of(uri_str)
+        if qn and qn != uri_str:
+            result[qn] = geom
+
+    return result
+
+
+def load_topo_components(source, *, include_collections=False):
+    """
+    Parse a Turtle topology file and return, for every feature, the terminal
+    Edge/Point features that compose its topology — however many Ring/Face/
+    Shell/Solid levels sit in between (a Face's edges, or a Solid's edges and
+    points several levels down, are all flattened the same way).
+
+    Returns
+    -------
+    dict[str, dict[str, dict[str, dict]]]
+        Keys are full URI strings *and* qname strings (prefix:local), same
+        indexing convention as `load_topo`. Each value is
+        `{"edges": {id: LineString-geom}, "points": {id: Point-geom}}`.
+
+    Examples
+    --------
+    >>> from topo_rdf_geojson import load_topo_components
+    >>> comps = load_topo_components("survey.ttl")
+    >>> comps["eg2:8446454"]["edges"].keys()
+    """
+    g = _load_graph(source)
+    resolver = _TopoResolver(g)
+    feature_uris = _feature_uris(g, include_collections)
+    qname_of = _qname_fn(g)
+
+    result = {}
+    for uri in feature_uris:
+        comps = resolver.components(uri)
+        if not comps["edges"] and not comps["points"]:
+            continue
+        uri_str = str(uri)
+        result[uri_str] = comps
+        qn = qname_of(uri_str)
+        if qn and qn != uri_str:
+            result[qn] = comps
+
+    return result
+
+
+def _load_graph(source) -> Graph:
+    if isinstance(source, Graph):
+        return source
+    g = Graph()
+    g.parse(source, format="turtle")
+    return g
+
+
+def _feature_uris(g: Graph, include_collections: bool) -> set:
     feature_uris = set()
     for s in g.subjects(RDF.type, GEOJSON.Feature):
         if isinstance(s, URIRef):
@@ -502,8 +646,12 @@ def load_topo(source, *, include_collections=False):
         for s in g.subjects(RDF.type, GEOJSON.FeatureCollection):
             if isinstance(s, URIRef):
                 feature_uris.add(s)
+    return feature_uris
 
-    # Build longest-prefix-first list for qname generation
+
+def _qname_fn(g: Graph):
+    """Return a uri_str -> qname_or_None function using longest-prefix-first
+    namespace matching."""
     ns_by_uri = sorted(
         [(str(ns), str(prefix)) for prefix, ns in g.namespaces()],
         key=lambda t: len(t[0]),
@@ -518,18 +666,7 @@ def load_topo(source, *, include_collections=False):
                     return f"{prefix}:{local}" if prefix else local
         return None
 
-    result = {}
-    for uri in feature_uris:
-        geom = resolver.geometry(uri)
-        if geom is None:
-            continue
-        uri_str = str(uri)
-        result[uri_str] = geom
-        qn = _qname(uri_str)
-        if qn and qn != uri_str:
-            result[qn] = geom
-
-    return result
+    return _qname
 
 
 # ---------------------------------------------------------------------------
