@@ -106,6 +106,18 @@ def load_ttl_geoms(ttl_files: list[str]):
 # Topology resolution helpers
 # ---------------------------------------------------------------------------
 
+def _resolve_refs(refs, geomsmap: dict, ttl_coords: dict):
+    """
+    Recursively resolve a (possibly nested) list of node references to
+    coordinates, dropping unresolved (None) leaves and any sublists that
+    end up empty after resolution.
+    """
+    if isinstance(refs, list):
+        resolved = [_resolve_refs(r, geomsmap, ttl_coords) for r in refs]
+        return [r for r in resolved if r is not None and r != []]
+    return geomsmap.get(refs) or ttl_coords.get(refs)
+
+
 def _chain_edges(edge_coord_lists: list) -> list:
     """
     Chain a list of edge LineString coordinate sequences into a closed ring.
@@ -370,7 +382,7 @@ _GEOM_TO_MODE = {
 }
 
 
-def process(input_data, mode="points,edges,faces", number=None, ttl_geoms=None, ttl_coords=None,
+def process(input_data, mode="points,edges,faces", objects=None , number=None, ttl_geoms=None, ttl_coords=None,
             ttl_components=None) -> str:
     if ttl_geoms is None:
         ttl_geoms = {}
@@ -430,7 +442,22 @@ def process(input_data, mode="points,edges,faces", number=None, ttl_geoms=None, 
         "shells": "MultiPolygon",
         "solids": "MultiPolygon",
     }
-    for feat_type in ["edges", "rings", "faces", "shells", "solids"]:
+    parseobjects = ["edges", "rings", "faces", "shells", "solids"]
+
+    # Support additional object keys to parse in form
+    # key:{geojson Geometry Type}
+    # e.g. parcels:MultiPolygon
+
+    if objects is not None:
+        try:
+            for obj in objects.split(","):
+                objkey,ogeomtype = obj.strip().split(":")
+                parseobjects.append(objkey)
+                geomtype[objkey] = ogeomtype
+        except:
+            raise ValueError("invalid list of key:geomtype for extracting objects")
+
+    for feat_type in parseobjects:
         if feat_type not in data:
             continue
         for feat in walk_features(data[feat_type]):
@@ -442,11 +469,7 @@ def process(input_data, mode="points,edges,faces", number=None, ttl_geoms=None, 
                 print(f"Warning: expected type {topo['type'].lower()} does not match {feat_type}")
 
             if "references" in topo:
-                coords = [
-                    geomsmap.get(node) or ttl_coords.get(node)
-                    for node in topo["references"]
-                ]
-                coords = [c for c in coords if c is not None]
+                coords = _resolve_refs(topo["references"], geomsmap, ttl_coords)
             elif "directed_references" in topo or "shells" in topo:
                 # A Solid's topology carries its directed refs under "shells"
                 # (pointing at Shell ids) rather than "directed_references",
@@ -600,6 +623,11 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
 
     mode = transform_metadata.metadata.get("mode", "points,edges,faces")
 
+    try:
+        objects = transform_metadata.metadata.get("objects", None)
+    except:
+        objects = None
+
     ttl_geoms_tm: dict = {}
     ttl_coords_tm: dict = {}
     ttl_components_tm: dict = {}
@@ -612,7 +640,7 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
         ttl_geoms_tm, ttl_coords_tm, ttl_components_tm = load_ttl_geoms(expanded)
 
     print("running in transformer mode")
-    return process(input_data, mode, None, ttl_geoms_tm, ttl_coords_tm, ttl_components_tm)
+    return process(input_data, mode, objects, None,  ttl_geoms_tm, ttl_coords_tm, ttl_components_tm)
 
 
 # Guard on `transform_metadata`'s presence so that a plain `import
@@ -658,6 +686,9 @@ def _cli():
     argparser.add_argument("-n", "--number", default=None, help="Max number of features to include")
     argparser.add_argument("-m", "--mode", default="points,edges,faces",
                            help="Feature types to include (default: points,edges,faces)")
+
+    argparser.add_argument("-k", "--objects", default=None,
+                           help="optional root level keys containing objects to convert")
     args = argparser.parse_args()
 
     # Expand TTL globs
@@ -678,7 +709,7 @@ def _cli():
     for f in sorted(glob_module.glob(args.input_data)):
         print(f"Processing {f}")
         with open(f) as fh:
-            output = process(fh, args.mode, args.number, ttl_geoms_map, ttl_coords_map, ttl_components_map)
+            output = process(fh, args.mode, args.objects, args.number,  ttl_geoms_map, ttl_coords_map, ttl_components_map)
         if args.print:
             print(output)
         if args.output_file:
