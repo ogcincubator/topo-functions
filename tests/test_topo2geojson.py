@@ -477,3 +477,102 @@ def test_namespace_resolution_via_examples_yaml_prefixes_in_transform_context(na
 
     data = json.loads(output)
     assert data["geometry"]["coordinates"] == [1.0, 2.0]   # a:Thing
+
+
+# ---------------------------------------------------------------------------
+# Topology shapes found in the topo-* building blocks' real examples that
+# previously crashed process() outright instead of resolving (or gracefully
+# failing to resolve)
+# ---------------------------------------------------------------------------
+
+def test_multilinestring_topology_resolves_to_multilinestring_geometry():
+    """topology.type == "MultiLineString" (references = a list of point-id
+    lists, one per line) previously fell through to the generic flat-point-
+    list fallback and crashed with `unhashable type: 'list'` (e.g.
+    topo-line's multilinestring.json)."""
+    feature = {
+        "type": "Feature",
+        "id": "MultiLineP1P2P3",
+        "geometry": None,
+        "topology": {
+            "type": "MultiLineString",
+            "references": [["P1", "P2"], ["P2", "P3"]],
+        },
+        "properties": None,
+    }
+    points = [
+        {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [10.0, 10.0]}},
+        {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [20.0, 20.0]}},
+        {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": [13.0, 17.0]}},
+    ]
+    data = {"type": "FeatureCollection", "features": [feature], "points": points}
+
+    output = process(json.dumps(data), mode="rings", number=None)
+    _persist("multilinestring.geojson", output)
+
+    parsed = json.loads(output)
+    assert parsed["features"][0]["geometry"] == {
+        "type": "MultiLineString",
+        "coordinates": [[[10.0, 10.0], [20.0, 20.0]], [[20.0, 20.0], [13.0, 17.0]]],
+    }
+
+
+def test_solid_directed_reference_missing_ref_key_is_skipped_not_a_crash():
+    """A Solid's "shells" entry that inlines a whole {"type": "Shell", ...}
+    object (rather than a flat {"ref": ..., "orientation": ...} pointer —
+    seen in topo-shell's shell-with-context.json) previously crashed with
+    `KeyError: 'ref'` in the top-level solids/shells collection loop; it
+    should be skipped with a warning instead."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "solids": [
+            {
+                "id": "solid-1",
+                "type": "Feature",
+                "topology": {
+                    "type": "Solid",
+                    "shells": [
+                        {"type": "Shell", "directed_references": [{"ref": "e1", "orientation": "+"}]},
+                    ],
+                },
+            }
+        ],
+        "points": [{"type": "Feature", "id": "p1", "geometry": {"type": "Point", "coordinates": [1.0, 1.0]}}],
+    }
+
+    output = process(json.dumps(data), mode="solids", number=None)
+    parsed = json.loads(output)
+    # No crash, and the bad node contributed nothing to the geometry.
+    assert parsed["features"][0]["geometry"] == {"type": "MultiPolygon", "coordinates": [[]]}
+
+
+def test_decompose_polygon_topology_skips_non_linestring_refs_without_crashing():
+    """A Solid resolved by chaining two TTL Shells (each a MultiPolygon, not
+    a flat point list) previously crashed `_decompose_polygon_topology` with
+    `unhashable type: 'list'` when asked for -m points/-m edges, since it
+    assumed every referenced geometry was edge-like (a flat point list)."""
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(TTL_FILE)])
+
+    feature = {
+        "type": "Feature",
+        "id": "solid-from-shells",
+        "geometry": None,
+        "topology": {
+            "type": "Solid",
+            "directed_references": [
+                {"ref": "eg2:44396823", "orientation": "+"},  # a Point, not a Shell — just needs *some* resolvable multi-part ref
+            ],
+        },
+        "properties": None,
+    }
+    # Force geom_type_str to a decomposition-triggering type by resolving
+    # through a ref whose TTL geometry is a Polygon (the parcel) rather than
+    # a flat edge, mirroring the real Shell/Solid case.
+    feature["topology"]["directed_references"] = [{"ref": "eg2:8446454", "orientation": "+"}]
+
+    output = process(json.dumps(feature), mode="points,edges", number=None,
+                      ttl_geoms=ttl_geoms, ttl_coords=ttl_coords, ttl_components=ttl_components)
+    # Must not raise; the nested Polygon ref simply can't be decomposed by
+    # this fallback and is skipped.
+    json.loads(output)

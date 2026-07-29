@@ -1,0 +1,38 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [
+              10.0,
+              10.0
+            ],
+            [
+              20.0,
+              20.0
+            ]
+          ],
+          [
+            [
+              20.0,
+              20.0
+            ],
+            [
+              13.0,
+              17.0
+            ]
+          ]
+        ]
+      },
+      "properties": null,
+      "id": "MultiLineP1P2P3"
+    }
+  ],
+  "@context": [
+    "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
+  ]
+}

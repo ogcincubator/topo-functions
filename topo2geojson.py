@@ -330,12 +330,25 @@ def _resolve_inline_topology(topo: dict, geomsmap: dict,
             pts = [c for r in refs if (c := lookup_coords(r)) is not None]
             return {"type": "LineString", "coordinates": pts} if len(pts) >= 2 else None
 
+        elif topo_type == "multilinestring":
+            lines = []
+            for line_refs in refs:
+                pts = [c for r in line_refs if (c := lookup_coords(r)) is not None]
+                if len(pts) >= 2:
+                    lines.append(pts)
+            return {"type": "MultiLineString", "coordinates": lines} if lines else None
+
         else:
             # Any other topology type (e.g. "Point", "Ring", "Face", "Shell",
             # "Solid") reaching here still carries a flat point-id reference
             # list, so the only valid GeoJSON shapes are Point or LineString —
             # never echo the topology-vocabulary type name itself as the
-            # GeoJSON "type" (it isn't one).
+            # GeoJSON "type" (it isn't one). A type whose references are
+            # themselves nested (e.g. "Polyhedron": shells of rings of
+            # point ids) isn't representable this way — unsupported, so
+            # skip rather than crash trying to treat a list as a point id.
+            if any(isinstance(r, list) for r in refs):
+                return None
             pts = [c for r in refs if (c := lookup_coords(r)) is not None]
             if not pts:
                 return None
@@ -486,7 +499,16 @@ def _decompose_polygon_topology(topo: dict, geomsmap: dict, ttl_geoms: dict,
                           "geometry": geom, "properties": {}})
             continue
 
-        # Multi-point (edge-like) reference
+        if geom.get("type") != "LineString":
+            # A ref that resolves to something deeper than a single edge
+            # (Polygon/MultiPolygon/MultiLineString — e.g. a Ring/Face/Shell
+            # id reached via a Solid's directed references) isn't a flat
+            # point list, so it can't be decomposed by this single-level
+            # fallback; the depth-agnostic ttl_components path (see
+            # docstring) is the one that actually handles that case.
+            continue
+
+        # Edge-like reference (a flat point list)
         if want_edges and ref_id not in seen_edges:
             seen_edges.add(ref_id)
             extra.append({"type": "Feature", "id": ref_id,
@@ -623,11 +645,15 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 coords = [[]]
                 startindex = 0
                 for node in drs:
-                    c = geomsmap.get(node["ref"]) or ttl_coords.get(node["ref"])
+                    ref_id = node.get("ref")
+                    if ref_id is None:
+                        print(f"Warning: directed reference missing 'ref' (got keys {list(node.keys())}), skipping")
+                        continue
+                    c = geomsmap.get(ref_id) or ttl_coords.get(ref_id)
                     if c is None:
                         continue
                     seg = list(c)[:]
-                    if node["orientation"] == "-":
+                    if node.get("orientation") == "-":
                         coords[0] += list(reversed(seg))[startindex:]
                     else:
                         coords[0] += seg[startindex:]
