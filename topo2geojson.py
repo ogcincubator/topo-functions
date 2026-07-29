@@ -15,6 +15,7 @@ Usage example:
 
 import json
 import glob as glob_module
+import os
 from typing import Generator, List
 
 from pyproj import Transformer
@@ -736,6 +737,34 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
 # `input_data` already bound as globals, or imports it and calls
 # run_transform(input_data, transform_metadata) directly.
 
+def _expand_ttl_glob(pattern: str, base_dirs: list) -> list:
+    """Expand a ttl glob pattern. Tries it as-is (relative to the process's
+    actual cwd) first, since that's what glob.glob() does natively; if that
+    finds nothing and the pattern is relative, retries it joined onto each
+    of *base_dirs* in turn.
+
+    This matters because a relative ttl path in a transform's metadata
+    (e.g. "_sources/examples/model.ttl" in transforms.yaml) is written
+    relative to the building block register root, but a transform host's
+    actual process cwd when it invokes the transform isn't guaranteed to be
+    that register root — cwd-only resolution silently finds nothing, and
+    rdflib's own relative-path fallback then reports a confusingly wrong
+    file path rather than a clean "not found". Passing the host-reported
+    working directory (transform_metadata.context.working_dir) as a
+    base_dirs fallback avoids that.
+    """
+    matches = sorted(glob_module.glob(pattern))
+    if matches or os.path.isabs(pattern):
+        return matches
+    for base in base_dirs:
+        if not base:
+            continue
+        matches = sorted(glob_module.glob(os.path.join(base, pattern)))
+        if matches:
+            return matches
+    return []
+
+
 def run_transform(input_data=None, transform_metadata=None) -> str:
     """
     Entry point for OGC Building Blocks-style transform hosts.
@@ -783,9 +812,14 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     ttl_val = transform_metadata.metadata.get("ttl")
     if ttl_val:
         ttl_paths = ttl_val if isinstance(ttl_val, list) else [ttl_val]
+        context = getattr(transform_metadata, "context", None)
+        base_dirs = [
+            getattr(context, "working_dir", None),
+            getattr(context, "bblock_files_path", None),
+        ] if context is not None else []
         expanded = []
         for p in ttl_paths:
-            expanded.extend(sorted(glob_module.glob(p)) or [p])
+            expanded.extend(_expand_ttl_glob(p, base_dirs) or [p])
         ttl_geoms_tm, ttl_coords_tm, ttl_components_tm = load_ttl_geoms(expanded)
 
     print("running in transformer mode")

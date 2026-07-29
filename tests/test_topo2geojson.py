@@ -7,11 +7,13 @@ topology reference list (edge ids with no coordinates anywhere in the file),
 so it can only be resolved by loading topoobjects.ttl.
 """
 import json
+import os
 import types
 
 import pytest
 from conftest import JSON_OUTPUT_DIR, TESTS_DIR
 from topo2geojson import (
+    _expand_ttl_glob,
     _merge_namespaces,
     _NamespaceResolvingMap,
     _normalize_namespace_input,
@@ -293,6 +295,59 @@ def test_run_transform_falls_back_to_module_globals():
 def test_run_transform_requires_input_data_and_transform_metadata():
     with pytest.raises(RuntimeError, match="requires input_data and transform_metadata"):
         run_transform()
+
+
+# ---------------------------------------------------------------------------
+# ttl path resolution (a transform's "ttl" metadata is commonly written
+# relative to the building block register root, not wherever the transform
+# host's own process cwd happens to be when it invokes the transform)
+# ---------------------------------------------------------------------------
+
+def test_expand_ttl_glob_falls_back_to_base_dirs_when_cwd_relative_finds_nothing(tmp_path, monkeypatch):
+    register_dir = tmp_path / "register"
+    (register_dir / "_sources" / "examples").mkdir(parents=True)
+    ttl_path = register_dir / "_sources" / "examples" / "model.ttl"
+    ttl_path.write_text("")
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    # Not found relative to cwd...
+    assert _expand_ttl_glob("_sources/examples/model.ttl", []) == []
+    # ...but found once the register root is offered as a fallback base dir.
+    matches = _expand_ttl_glob("_sources/examples/model.ttl", [str(register_dir)])
+    assert [os.path.normpath(m) for m in matches] == [str(ttl_path)]
+
+
+def test_run_transform_resolves_relative_ttl_via_context_working_dir(tmp_path, monkeypatch):
+    """A transform host that reports context.working_dir (per the bblocks
+    transform-context docs) should have its relative "ttl" metadata path
+    resolve against that, even though the host's actual process cwd (here,
+    deliberately, an unrelated directory) doesn't contain it — this is what
+    broke a topo2geojson transform step wired into a real building block's
+    transforms.yaml even though the identical TTL/JSON pair worked fine from
+    the CLI (where the user naturally runs from the right directory)."""
+    register_dir = tmp_path / "register"
+    (register_dir / "_sources" / "examples").mkdir(parents=True)
+    ttl_path = register_dir / "_sources" / "examples" / "model.ttl"
+    ttl_path.write_text(TTL_FILE.read_text())
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    transform_metadata = types.SimpleNamespace(
+        metadata={"mode": "faces", "ttl": ["_sources/examples/model.ttl"]},
+        context=types.SimpleNamespace(working_dir=str(register_dir)),
+    )
+
+    with PARCEL_FILE.open() as fh:
+        output = run_transform(fh.read(), transform_metadata)
+
+    data = json.loads(output)
+    assert data["type"] == "Feature"
+    assert data["geometry"]["type"] == "Polygon"
 
 
 # ---------------------------------------------------------------------------
