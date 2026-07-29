@@ -1,10 +1,46 @@
 """Tests for topo_rdf_geojson.load_topo() against tests/topoobjects.ttl."""
 import json
 
+import pytest
 from conftest import RDF_OUTPUT_DIR, TESTS_DIR
 from topo_rdf_geojson import load_topo, load_topo_components
 
 TTL_FILE = TESTS_DIR / "topoobjects.ttl"
+
+# Real-world TTL mixes topo:Edge/topo:relatedFeatures with plain
+# geojson:LineString/geojson:relatedFeatures for the same kind of edge
+# feature (see _sources/examples/referenced-objects.ttl in the topo-feature
+# register) — both predicates must resolve.
+GEOJSON_RELATED_FEATURES_TTL = """
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+
+<http://www.example.com/features/LineP1P2> a geojson:Feature ;
+    geojson:topology [ a geojson:LineString ;
+            geojson:relatedFeatures ( <http://www.example.com/features/P1> <http://www.example.com/features/P2> ) ] .
+
+<http://www.example.com/features/P1> a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ; geojson:coordinates ( 10 10 ) ] .
+
+<http://www.example.com/features/P2> a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ; geojson:coordinates ( 20 20 ) ] .
+"""
+
+
+@pytest.fixture
+def geojson_related_features_ttl(tmp_path):
+    path = tmp_path / "geojson-related-features.ttl"
+    path.write_text(GEOJSON_RELATED_FEATURES_TTL)
+    return path
+
+
+def test_load_topo_resolves_edge_using_geojson_related_features_predicate(geojson_related_features_ttl):
+    """A geojson:LineString topology node that declares its endpoints via
+    geojson:relatedFeatures (rather than topo:relatedFeatures) must still
+    resolve — both predicates are used interchangeably in real data."""
+    geoms = load_topo(str(geojson_related_features_ttl))
+
+    line = geoms["http://www.example.com/features/LineP1P2"]
+    assert line == {"type": "LineString", "coordinates": [[10.0, 10.0], [20.0, 20.0]]}
 
 
 def test_load_topo_resolves_edge_to_linestring():

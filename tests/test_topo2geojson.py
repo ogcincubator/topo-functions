@@ -11,11 +11,95 @@ import types
 
 import pytest
 from conftest import JSON_OUTPUT_DIR, TESTS_DIR
-from topo2geojson import load_ttl_geoms, process, run_transform
+from topo2geojson import (
+    _merge_namespaces,
+    _NamespaceResolvingMap,
+    _normalize_namespace_input,
+    _prefixes_from_jsonld_context,
+    load_ttl_geoms,
+    process,
+    run_transform,
+)
 
 CUBE_FILE = TESTS_DIR / "cube-with-void.json"
 PARCEL_FILE = TESTS_DIR / "parcel1.json"
 TTL_FILE = TESTS_DIR / "topoobjects.ttl"
+
+# TTL fixture used by the namespace-resolution tests below: two distinct
+# features share the local name "Thing" under two different namespaces, so
+# resolving by declared namespace (rather than by accidental local-name
+# uniqueness) is the only way to land on the intended one.
+NAMESPACE_TTL = """
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+@prefix a: <http://a/> .
+@prefix b: <http://b/> .
+
+a:Thing a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ;
+        geojson:coordinates ( 1.0 2.0 ) ] .
+
+b:Thing a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ;
+        geojson:coordinates ( 3.0 4.0 ) ] .
+"""
+
+
+@pytest.fixture
+def namespace_ttl(tmp_path):
+    path = tmp_path / "namespace.ttl"
+    path.write_text(NAMESPACE_TTL)
+    return path
+
+
+# TTL fixture reproducing a real-world layout (topo-feature register's
+# referenced-objects.ttl): edge features typed geojson:LineString whose
+# endpoints are declared via geojson:relatedFeatures (not topo:Edge /
+# topo:relatedFeatures), referenced from a JSON Polygon ring by bare local
+# name ("LineP1P2" etc., matching the TTL's URI tail).
+GEOJSON_EDGES_TTL = """
+@prefix geojson: <https://purl.org/geojson/vocab#> .
+
+<http://www.example.com/features/LineP1P2> a geojson:Feature ;
+    geojson:topology [ a geojson:LineString ;
+            geojson:relatedFeatures ( <http://www.example.com/features/P1> <http://www.example.com/features/P2> ) ] .
+
+<http://www.example.com/features/LineP2P3> a geojson:Feature ;
+    geojson:topology [ a geojson:LineString ;
+            geojson:relatedFeatures ( <http://www.example.com/features/P2> <http://www.example.com/features/P3> ) ] .
+
+<http://www.example.com/features/LineP3P1> a geojson:Feature ;
+    geojson:topology [ a geojson:LineString ;
+            geojson:relatedFeatures ( <http://www.example.com/features/P3> <http://www.example.com/features/P1> ) ] .
+
+<http://www.example.com/features/P1> a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ; geojson:coordinates ( 10 10 ) ] .
+
+<http://www.example.com/features/P2> a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ; geojson:coordinates ( 20 20 ) ] .
+
+<http://www.example.com/features/P3> a geojson:Feature ;
+    geojson:geometry [ a geojson:Point ; geojson:coordinates ( 13 17 ) ] .
+"""
+
+
+@pytest.fixture
+def geojson_edges_ttl(tmp_path):
+    path = tmp_path / "geojson-edges.ttl"
+    path.write_text(GEOJSON_EDGES_TTL)
+    return path
+
+
+def _point_feature(ref: str, context=None) -> dict:
+    feature = {
+        "type": "Feature",
+        "id": "check",
+        "geometry": None,
+        "topology": {"type": "Point", "references": [ref]},
+        "properties": {},
+    }
+    if context is not None:
+        feature["@context"] = context
+    return feature
 
 
 def _persist(name: str, geojson_str: str) -> None:
@@ -209,3 +293,132 @@ def test_run_transform_falls_back_to_module_globals():
 def test_run_transform_requires_input_data_and_transform_metadata():
     with pytest.raises(RuntimeError, match="requires input_data and transform_metadata"):
         run_transform()
+
+
+# ---------------------------------------------------------------------------
+# Namespace/prefix resolution
+# ---------------------------------------------------------------------------
+
+def test_normalize_namespace_input_accepts_dict_list_and_bare_uri():
+    assert _normalize_namespace_input({"a": "http://a/"}) == {"a": "http://a/"}
+    assert _normalize_namespace_input(["a=http://a/", "http://b/"]) == {
+        "a": "http://a/", "http://b/": "http://b/",
+    }
+    assert _normalize_namespace_input(None) == {}
+    assert _normalize_namespace_input([]) == {}
+
+
+def test_prefixes_from_jsonld_context_filters_non_namespace_terms():
+    context = [
+        "https://example.org/remote-context.jsonld",  # remote URL, skipped (not dereferenced)
+        {
+            "exns": "http://a/",                        # namespace prefix (trailing "/")
+            "name": "http://xmlns.com/foaf/0.1/name",    # full predicate IRI, not a prefix
+            "@vocab": "http://ignored/",                 # JSON-LD keyword, skipped
+        },
+    ]
+    assert _prefixes_from_jsonld_context(context) == {"exns": "http://a/"}
+
+
+def test_merge_namespaces_precedence_context_then_examples_then_fallback():
+    """Preference order: the input JSON's own @context, then examples.yaml
+    prefixes (via the bblocks transform context), then metadata globals /
+    CLI args as the last-resort fallback — a source only fills in prefixes
+    a higher-priority source didn't already declare."""
+    data = {"@context": {"p": "http://from-context/"}}
+    transform_metadata = types.SimpleNamespace(
+        metadata={"namespaces": {"p": "http://from-metadata/", "q": "http://from-metadata-only/"}},
+        context=types.SimpleNamespace(example={"prefixes": {"p": "http://from-examples/"}}, snippet=None),
+    )
+    merged = _merge_namespaces(data, transform_metadata,
+                                cli_namespaces=["p=http://from-cli/", "r=http://from-cli-only/"])
+
+    assert merged["p"] == "http://from-context/"          # JSON @context wins
+    assert merged["q"] == "http://from-metadata-only/"     # metadata fills in what context lacks
+    assert merged["r"] == "http://from-cli-only/"          # CLI is the last-resort fallback
+
+
+def test_namespace_resolving_map_tries_prefix_and_local_name_candidates():
+    data = {"http://a/Thing": "A", "http://b/Thing": "B"}
+    wrapped = _NamespaceResolvingMap(data, {"exns": "http://a/"})
+
+    assert wrapped.get("http://a/Thing") == "A"            # exact match, no namespace lookup needed
+    assert wrapped.get("exns:Thing") == "A"                 # declared prefix + local name
+    assert wrapped.get("missing", "default") == "default"   # no candidate matches
+
+
+def test_polygon_ring_of_geojson_linestring_edges_resolves_via_bare_local_name(geojson_edges_ttl):
+    """A JSON Polygon ring referencing edges by their bare local name
+    ("LineP1P2" etc.) must chain correctly even though the TTL declares
+    those edges as geojson:LineString/geojson:relatedFeatures rather than
+    topo:Edge/topo:relatedFeatures."""
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(geojson_edges_ttl)])
+
+    feature = {
+        "type": "Feature",
+        "id": "triangle",
+        "geometry": None,
+        "topology": {"type": "Polygon", "references": [["LineP1P2", "LineP2P3", "LineP3P1"]]},
+        "properties": {},
+    }
+    output = process(json.dumps(feature), mode="faces", number=None,
+                      ttl_geoms=ttl_geoms, ttl_coords=ttl_coords, ttl_components=ttl_components)
+
+    _persist("geojson-edges-triangle.geojson", output)
+    data = json.loads(output)
+    assert data["type"] == "Feature"
+    ring = data["geometry"]["coordinates"][0]
+    assert ring == [[10.0, 10.0], [20.0, 20.0], [13.0, 17.0], [10.0, 10.0]]
+
+
+def test_namespace_resolution_reconciles_unrecognized_prefix(namespace_ttl):
+    """A JSON ref like "exns:Thing" whose prefix isn't declared anywhere in
+    the TTL is reconciled against the TTL's true URI (http://a/Thing) via an
+    explicitly declared namespace — not by accidentally colliding with
+    "b:Thing"'s local name (both "a:Thing" and "b:Thing" share the local
+    name "Thing")."""
+    ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([str(namespace_ttl)])
+
+    output = process(json.dumps(_point_feature("exns:Thing")), mode="points", number=None,
+                      ttl_geoms=ttl_geoms, ttl_coords=ttl_coords, ttl_components=ttl_components,
+                      namespaces={"exns": "http://a/"})
+
+    _persist("namespace-unrecognized-prefix.geojson", output)
+    data = json.loads(output)
+    assert data["geometry"]["coordinates"] == [1.0, 2.0]   # a:Thing, not b:Thing
+
+
+def test_namespace_resolution_prefers_jsonld_context_over_metadata_fallback(namespace_ttl):
+    """The input JSON's own @context takes precedence over a metadata-globals
+    namespace declaration for the same prefix."""
+    feature = _point_feature("exns:Thing", context={"exns": "http://b/"})
+    transform_metadata = types.SimpleNamespace(metadata={
+        "mode": "points",
+        "ttl": str(namespace_ttl),
+        "namespaces": {"exns": "http://a/"},
+    })
+
+    output = run_transform(json.dumps(feature), transform_metadata)
+    _persist("namespace-jsonld-context-precedence.geojson", output)
+
+    data = json.loads(output)
+    assert data["geometry"]["coordinates"] == [3.0, 4.0]   # b:Thing, from the JSON's own @context
+
+
+def test_namespace_resolution_via_examples_yaml_prefixes_in_transform_context(namespace_ttl):
+    """examples.yaml prefixes, exposed by a bblocks transform host via
+    transform_metadata.context.example["prefixes"], resolve refs when the
+    input JSON has no @context of its own."""
+    transform_metadata = types.SimpleNamespace(
+        metadata={"mode": "points", "ttl": str(namespace_ttl)},
+        context=types.SimpleNamespace(
+            example={"prefixes": {"exns": "http://a/"}},
+            snippet=None,
+        ),
+    )
+
+    output = run_transform(json.dumps(_point_feature("exns:Thing")), transform_metadata)
+    _persist("namespace-examples-yaml-prefixes.geojson", output)
+
+    data = json.loads(output)
+    assert data["geometry"]["coordinates"] == [1.0, 2.0]   # a:Thing

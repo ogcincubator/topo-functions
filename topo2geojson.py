@@ -103,6 +103,143 @@ def load_ttl_geoms(ttl_files: list[str]):
 
 
 # ---------------------------------------------------------------------------
+# Namespace/prefix resolution
+# ---------------------------------------------------------------------------
+# Bare JSON references (e.g. "LineP1P2") and refs carrying a prefix unknown
+# to the TTL graph (e.g. "eg:LineP1P2") are reconciled against TTL URIs
+# (e.g. "http://somens/LineP1P2") by trying prefix + local-name concatenation
+# against an optional set of namespaces gathered, in order of preference,
+# from:
+#   1. the JSON-LD @context declared in the input JSON itself
+#   2. examples.yaml prefixes, exposed to bblocks transforms via
+#      transform_metadata.context.example/.snippet["prefixes"]
+#      (https://ogcincubator.github.io/bblocks-docs/create/examples#prefixes,
+#      https://ogcincubator.github.io/bblocks-docs/create/transforms#transform-context)
+#   3. metadata globals (transform_metadata.metadata["namespaces"/"prefixes"])
+#      or command-line -ns/--namespace arguments (fallback, in that order)
+
+def _prefixes_from_jsonld_context(context) -> dict[str, str]:
+    """Extract {prefix: namespace_uri} mappings from a JSON-LD @context value
+    (a dict, or a list mixing dicts with remote-context URL strings, which
+    are skipped since they aren't dereferenced here)."""
+    prefixes: dict[str, str] = {}
+    if not context:
+        return prefixes
+    for entry in context if isinstance(context, list) else [context]:
+        if not isinstance(entry, dict):
+            continue
+        for term, value in entry.items():
+            if term.startswith("@"):
+                continue
+            uri = value.get("@id") if isinstance(value, dict) else value
+            if isinstance(uri, str) and (uri.endswith("/") or uri.endswith("#")):
+                prefixes[term] = uri
+    return prefixes
+
+
+def _prefixes_from_transform_context(transform_metadata) -> dict[str, str]:
+    """Extract example-level examples.yaml prefixes exposed by a bblocks
+    transform host via transform_metadata.context.example/.snippet."""
+    prefixes: dict[str, str] = {}
+    context = getattr(transform_metadata, "context", None)
+    if context is None:
+        return prefixes
+    for attr in ("example", "snippet"):
+        obj = context.get(attr) if isinstance(context, dict) else getattr(context, attr, None)
+        if obj is None:
+            continue
+        raw = obj.get("prefixes") if isinstance(obj, dict) else getattr(obj, "prefixes", None)
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                prefixes.setdefault(k, v)
+    return prefixes
+
+
+def _normalize_namespace_input(raw) -> dict[str, str]:
+    """Normalize a namespaces/prefixes value from CLI args or metadata into a
+    {prefix: namespace_uri} dict. Accepts a dict already, or a list/tuple of
+    "prefix=uri" / bare-uri strings (a bare URI is keyed by itself, so it's
+    still tried for local-name concatenation even without an explicit CURIE
+    prefix)."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    prefixes: dict[str, str] = {}
+    for item in raw if isinstance(raw, (list, tuple)) else [raw]:
+        if not isinstance(item, str):
+            continue
+        if "=" in item:
+            prefix, uri = item.split("=", 1)
+            prefixes[prefix.strip()] = uri.strip()
+        else:
+            prefixes[item.strip()] = item.strip()
+    return prefixes
+
+
+def _merge_namespaces(data: dict, transform_metadata=None, cli_namespaces=None) -> dict[str, str]:
+    """Merge namespace/prefix declarations from every supported source. The
+    first source to declare a given prefix wins:
+      1. the input JSON's own @context
+      2. examples.yaml prefixes (via the bblocks transform context)
+      3. metadata globals / command-line arguments (fallback)
+    """
+    merged: dict[str, str] = {}
+
+    def _apply(mapping: dict[str, str]) -> None:
+        for k, v in mapping.items():
+            merged.setdefault(k, v)
+
+    _apply(_prefixes_from_jsonld_context((data or {}).get("@context")))
+    if transform_metadata is not None:
+        _apply(_prefixes_from_transform_context(transform_metadata))
+        metadata = getattr(transform_metadata, "metadata", None) or {}
+        _apply(_normalize_namespace_input(metadata.get("namespaces") or metadata.get("prefixes")))
+    _apply(_normalize_namespace_input(cli_namespaces))
+
+    return merged
+
+
+class _NamespaceResolvingMap:
+    """Read-only dict wrapper: exact-key lookup first, falling back to trying
+    each declared namespace URI concatenated with the key's local name (and,
+    for prefixed keys, the namespace registered for that exact prefix)."""
+
+    def __init__(self, data: dict, namespaces: dict[str, str] | None):
+        self._data = data
+        self._namespaces = namespaces or {}
+
+    def _candidates(self, key):
+        if not self._namespaces or not isinstance(key, str):
+            return
+        if ":" in key and not key.startswith(("http://", "https://")):
+            prefix, local = key.split(":", 1)
+            ns = self._namespaces.get(prefix)
+            if ns:
+                yield ns + local
+        local_name = _local_name(key)
+        for ns in self._namespaces.values():
+            yield ns + local_name
+
+    def get(self, key, default=None):
+        if key in self._data:
+            return self._data[key]
+        for candidate in self._candidates(key):
+            if candidate in self._data:
+                return self._data[candidate]
+        return default
+
+    def items(self):
+        return self._data.items()
+
+    def __len__(self):
+        return len(self._data)
+
+    def __bool__(self):
+        return bool(self._data)
+
+
+# ---------------------------------------------------------------------------
 # Topology resolution helpers
 # ---------------------------------------------------------------------------
 
@@ -383,7 +520,7 @@ _GEOM_TO_MODE = {
 
 
 def process(input_data, mode="points,edges,faces", objects=None , number=None, ttl_geoms=None, ttl_coords=None,
-            ttl_components=None) -> str:
+            ttl_components=None, namespaces=None, transform_metadata=None) -> str:
     if ttl_geoms is None:
         ttl_geoms = {}
     if ttl_coords is None:
@@ -395,6 +532,12 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         data = json.loads(input_data)
     else:
         data = json.load(input_data)
+
+    resolved_namespaces = _merge_namespaces(data, transform_metadata, namespaces)
+    if resolved_namespaces:
+        ttl_geoms = _NamespaceResolvingMap(ttl_geoms, resolved_namespaces)
+        ttl_coords = _NamespaceResolvingMap(ttl_coords, resolved_namespaces)
+        ttl_components = _NamespaceResolvingMap(ttl_components, resolved_namespaces)
 
     count = 0
     is_feature = data.get("type") == "Feature"
@@ -601,6 +744,12 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
       - "mode": comma-separated feature-type list (default "points,edges,faces")
       - "ttl":  a TTL path, glob pattern, or list of either, providing
                 topology for features referenced but not defined inline
+      - "namespaces"/"prefixes": optional {prefix: namespace_uri} fallback
+                map, used to reconcile bare or unrecognized-prefix JSON refs
+                (e.g. "LineP1P2") against TTL URIs (e.g. "http://somens/LineP1P2")
+                when the input JSON's own @context and the bblocks example's
+                examples.yaml prefixes (transform_metadata.context.example/
+                .snippet["prefixes"]) don't already cover the prefix
 
     Both arguments are optional: a host that execs this module with
     `input_data`/`transform_metadata` already bound as globals doesn't need
@@ -640,7 +789,8 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
         ttl_geoms_tm, ttl_coords_tm, ttl_components_tm = load_ttl_geoms(expanded)
 
     print("running in transformer mode")
-    return process(input_data, mode, objects, None,  ttl_geoms_tm, ttl_coords_tm, ttl_components_tm)
+    return process(input_data, mode, objects, None, ttl_geoms_tm, ttl_coords_tm, ttl_components_tm,
+                    transform_metadata=transform_metadata)
 
 
 # Guard on `transform_metadata`'s presence so that a plain `import
@@ -689,6 +839,13 @@ def _cli():
 
     argparser.add_argument("-k", "--objects", default=None,
                            help="optional root level keys containing objects to convert")
+    argparser.add_argument("-ns", "--namespace", action="append", default=[],
+                           metavar="PREFIX=URI",
+                           help="Namespace/prefix declaration(s) to try (in addition to any "
+                                "declared in the input JSON's own @context or in a transform's "
+                                "examples.yaml prefixes) when reconciling bare or unrecognized-"
+                                "prefix references (e.g. \"LineP1P2\") against TTL URIs (e.g. "
+                                "\"http://somens/LineP1P2\"). Repeatable; PREFIX=URI or a bare URI.")
     args = argparser.parse_args()
 
     # Expand TTL globs
@@ -709,7 +866,8 @@ def _cli():
     for f in sorted(glob_module.glob(args.input_data)):
         print(f"Processing {f}")
         with open(f) as fh:
-            output = process(fh, args.mode, args.objects, args.number,  ttl_geoms_map, ttl_coords_map, ttl_components_map)
+            output = process(fh, args.mode, args.objects, args.number, ttl_geoms_map, ttl_coords_map,
+                              ttl_components_map, namespaces=args.namespace)
         if args.print:
             print(output)
         if args.output_file:

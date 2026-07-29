@@ -80,6 +80,22 @@ with open("parcel1.json") as fh:
 
 `process()` returns a GeoJSON string (a `Feature` if the input was a single Feature, otherwise a `FeatureCollection`). If the input declares a GeoJSON `crs` member (e.g. `{"type": "name", "properties": {"name": "EPSG:7850"}}`), the output geometries are reprojected to WGS84 (EPSG:4326) using [pyproj](https://pyproj4.github.io/pyproj/) — no geopandas/shapely/GDAL required.
 
+### Namespace/prefix resolution
+
+A JSON topology reference may be a bare local name (`"LineP1P2"`) or carry a prefix the TTL graph doesn't itself declare (`"eg:LineP1P2"`). To reconcile these against the TTL's real URIs (`"http://somens/LineP1P2"`), pass an optional `namespaces` map of `{prefix: namespace_uri}` — for an unprefixed ref, every declared namespace is tried as `namespace_uri + local_name`; for a prefixed ref, the namespace registered for that exact prefix is tried first.
+
+`namespaces` merges declarations from several sources, in order of preference (first declaration of a given prefix wins):
+
+1. the input JSON's own `@context` (a JSON-LD context dict, or a list containing one)
+2. [examples.yaml prefixes](https://ogcincubator.github.io/bblocks-docs/create/examples#prefixes), exposed to bblocks transforms via the [transform context](https://ogcincubator.github.io/bblocks-docs/create/transforms#transform-context) (`transform_metadata.context.example`/`.snippet["prefixes"]`)
+3. metadata globals (`transform_metadata.metadata["namespaces"]` or `["prefixes"]`) or the CLI's `-ns`/`--namespace` arguments — the fallback, used when neither of the above declares the prefix
+
+```python
+output = process(fh, mode="faces", number=None,
+                  ttl_geoms=ttl_geoms, ttl_coords=ttl_coords,
+                  namespaces={"eg": "http://somens/"})
+```
+
 ### Use as an OGC Building Blocks transform
 
 `topo2geojson.py` doubles as a transform script for the [OGC Building Blocks](https://github.com/opengeospatial/bblocks) convention, which runs with two values already bound —
@@ -88,6 +104,7 @@ with open("parcel1.json") as fh:
 - `transform_metadata` — an object exposing `.metadata`, a dict of parameters for this transform run:
   - `"mode"` — same comma-separated feature-type list as the CLI `-m` flag (default `"points,edges,faces"`)
   - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
+  - `"namespaces"`/`"prefixes"` — optional `{prefix: namespace_uri}` fallback map for [namespace/prefix resolution](#namespaceprefix-resolution), used below the input JSON's own `@context` and any examples.yaml prefixes the host exposes via `transform_metadata.context`
 
 Call `run_transform()` to get the GeoJSON string to bind to `output_data`. Both arguments are optional — if omitted, they're picked up from `input_data`/`transform_metadata` globals (e.g. a host that `exec`s the whole module, or one that sets them as module attributes after importing it):
 
@@ -150,6 +167,7 @@ topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [
 A feature that only ever resolves as a single Polygon or MultiPolygon (a Ring/Face, or a Shell/Solid several levels deeper — typically one whose topology is entirely TTL-referenced, with no top-level `points`/`edges` collection of its own) is still a valid source for `-m edges`/`-m points`: it's decomposed down to the edges/points that make it up, however many Ring/Face/Shell/Solid levels sit in between, rather than yielding nothing for those modes.
 | `-n`, `--number` | Max number of features to include |
 | `-p`, `--print` | Print output to stdout |
+| `-ns`, `--namespace` | `PREFIX=URI` (or a bare `URI`) [namespace/prefix declaration](#namespaceprefix-resolution) for resolving references (repeatable; the last-resort fallback below the input JSON's own `@context` and examples.yaml prefixes) |
 
 Examples:
 

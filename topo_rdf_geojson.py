@@ -9,14 +9,18 @@ Supported topology types
 ------------------------
 Point  — direct geojson:geometry / dct:spatial coordinates
 Edge / geojson:LineString
-         — topo:relatedFeatures  → LineString
+         — topo:relatedFeatures (or geojson:relatedFeatures) → LineString
 Ring   — topo:directedReferences of Edges → closed LinearRing (as Polygon)
 Face   — topo:directedReferences of Rings → Polygon
 Shell  — topo:directedReferences of Faces → MultiPolygon
 Solid  — topo:shells of Shells            → MultiPolygon (union of all faces)
 geojson:Polygon
-         — topo:relatedFeatures = list-of-rings, each ring a list of edge URIs
-           (direction auto-detected by adjacency)
+         — topo:relatedFeatures (or geojson:relatedFeatures) = list-of-rings,
+           each ring a list of edge URIs (direction auto-detected by adjacency)
+
+topo:relatedFeatures and geojson:relatedFeatures are treated as synonyms
+throughout (real-world data uses either predicate for the same kind of edge
+feature); topo:relatedFeatures is tried first.
 
 Multiple geojson:topology triples on the same feature are merged:
   all LineString  → MultiLineString
@@ -113,6 +117,15 @@ class _TopoResolver:
     def _is_list_head(self, node) -> bool:
         """True if *node* is a BNode that heads an RDF list (has rdf:first)."""
         return isinstance(node, BNode) and self.g.value(node, RDF.first) is not None
+
+    def _related_features(self, topo_node):
+        """Return the topo:relatedFeatures / geojson:relatedFeatures RDF list
+        node for a topology node. Data in the wild uses either predicate
+        interchangeably (e.g. topo:Edge nodes commonly carry topo:
+        relatedFeatures, while geojson:LineString nodes carry geojson:
+        relatedFeatures), so both are tried."""
+        return (self.g.value(topo_node, TOPO.relatedFeatures)
+                or self.g.value(topo_node, GEOJSON.relatedFeatures))
 
     def _ref_to_uri(self, ref_str: str) -> URIRef:
         """
@@ -289,13 +302,13 @@ class _TopoResolver:
         topo_node = self.g.value(edge_uri, GEOJSON.topology)
         if topo_node is None:
             return []
-        rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+        rf_node = self._related_features(topo_node)
         coords = [pt for ref in self._items(rf_node)
                   if (pt := self._point_coords(URIRef(str(ref)))) is not None]
         return list(reversed(coords)) if orientation == "-" else coords
 
     def _resolve_edge(self, topo_node) -> dict | None:
-        rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+        rf_node = self._related_features(topo_node)
         coords = [pt for ref in self._items(rf_node)
                   if (pt := self._point_coords(URIRef(str(ref)))) is not None]
         return {"type": "LineString", "coordinates": coords} if len(coords) >= 2 else None
@@ -309,7 +322,7 @@ class _TopoResolver:
         topo_node = self.g.value(edge_uri, GEOJSON.topology)
         if topo_node is None:
             return []
-        rf = self.g.value(topo_node, TOPO.relatedFeatures)
+        rf = self._related_features(topo_node)
         return [pt for ref in self._items(rf)
                 if (pt := self._point_coords(URIRef(str(ref)))) is not None]
 
@@ -345,7 +358,7 @@ class _TopoResolver:
           topo:relatedFeatures ( ( edge1 edge2 … ) ( edge_a … ) … )
         Outer list = rings; each inner list = ordered edge URIs.
         """
-        rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+        rf_node = self._related_features(topo_node)
         ring_nodes = self._items(rf_node)
         rings = []
         for ring_node in ring_nodes:
@@ -497,7 +510,7 @@ class _TopoResolver:
                 geom = self._resolve_edge(topo_node)
                 if geom:
                     edges[key] = geom
-                rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+                rf_node = self._related_features(topo_node)
                 for ref in self._items(rf_node):
                     visit(URIRef(str(ref)))
                 return
@@ -527,7 +540,7 @@ class _TopoResolver:
                 return
 
             if topo_type == _GJ_POLYGON:
-                rf_node = self.g.value(topo_node, TOPO.relatedFeatures)
+                rf_node = self._related_features(topo_node)
                 for ring_node in self._items(rf_node):
                     edge_nodes = (self._items(ring_node)
                                   if self._is_list_head(ring_node) else [ring_node])
