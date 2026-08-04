@@ -13,6 +13,7 @@ import types
 import pytest
 from conftest import JSON_OUTPUT_DIR, TESTS_DIR
 from topo2geojson import (
+    _chain_edges,
     _expand_ttl_glob,
     _merge_namespaces,
     _NamespaceResolvingMap,
@@ -625,3 +626,74 @@ def test_custom_object_polygon_ring_of_edges_is_not_over_nested():
                for pt in ring), f"ring is over-nested: {ring!r}"
     assert ring[0] == ring[-1]   # closed
     assert len(ring) == 4        # 3 distinct vertices + closing point
+
+
+# ---------------------------------------------------------------------------
+# Edge orientation ("direction") auto-detection for Polygon `references`
+# ---------------------------------------------------------------------------
+# A Polygon's `references` (as opposed to `directed_references`, which
+# carries explicit "+"/"-" orientation per edge) gives no orientation hint
+# at all — each edge's direction has to be inferred purely from which
+# endpoint touches its neighbour.
+
+P1, P2, P3 = [10.0, 10.0], [20.0, 20.0], [13.0, 17.0]
+
+
+@pytest.mark.parametrize("edge_segs", [
+    [[P1, P2], [P2, P3], [P3, P1]],   # all forward
+    [[P2, P1], [P3, P2], [P1, P3]],   # all reversed
+    [[P1, P2], [P3, P2], [P1, P3]],   # mixed
+    [[P2, P1], [P2, P3], [P3, P1]],   # first edge stored backwards relative
+                                       # to the other two's traversal order —
+                                       # only matching against the *tail* of
+                                       # the growing chain misses this and
+                                       # falls into the non-adjacent fallback
+])
+def test_chain_edges_flips_any_misoriented_edge_regardless_of_position(edge_segs):
+    ring = _chain_edges(edge_segs)
+    assert ring[0] == ring[-1]                       # closed
+    assert len(ring) == 4                              # 3 vertices + closing point
+    assert set(map(tuple, ring[:-1])) == {tuple(P1), tuple(P2), tuple(P3)}
+
+
+def test_polygon_references_ring_resolves_correctly_when_first_edge_is_backwards():
+    """End-to-end: a Polygon feature whose first ring-edge is stored in the
+    "wrong" direction (its own start/end don't align with the following
+    edge) must still produce a valid, non-self-intersecting closed ring —
+    not the degenerate/duplicated-vertex ring the old tail-only adjacency
+    check produced."""
+    feature = {
+        "type": "Feature",
+        "id": "triangle",
+        "geometry": None,
+        "topology": {
+            "type": "Polygon",
+            "references": [["e1", "e2", "e3"]],
+        },
+        "properties": None,
+    }
+    points = [
+        {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": P1}},
+        {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": P2}},
+        {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": P3}},
+    ]
+    edges = [
+        # e1 stored backwards: natural traversal is P1->P2, but this is P2->P1
+        {"type": "Feature", "id": "e1", "geometry": None,
+         "topology": {"type": "Edge", "references": ["P2", "P1"]}},
+        {"type": "Feature", "id": "e2", "geometry": None,
+         "topology": {"type": "Edge", "references": ["P2", "P3"]}},
+        {"type": "Feature", "id": "e3", "geometry": None,
+         "topology": {"type": "Edge", "references": ["P3", "P1"]}},
+    ]
+    data = {"type": "FeatureCollection", "features": [feature], "points": points, "edges": edges}
+
+    output = process(json.dumps(data), mode="faces", number=None)
+    parsed = json.loads(output)
+    feature = parsed["features"][0] if parsed.get("type") == "FeatureCollection" else parsed
+
+    assert feature["geometry"]["type"] == "Polygon"
+    ring = feature["geometry"]["coordinates"][0]
+    assert ring[0] == ring[-1]
+    assert len(ring) == 4
+    assert set(map(tuple, ring[:-1])) == {tuple(P1), tuple(P2), tuple(P3)}

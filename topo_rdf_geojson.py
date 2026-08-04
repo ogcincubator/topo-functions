@@ -329,8 +329,16 @@ class _TopoResolver:
     def _chain_edges(self, edge_uri_nodes: list) -> list[list[float]]:
         """
         Chain an ordered list of edge URIs into a closed linear ring.
-        Direction of each edge is auto-detected by adjacency with the
-        previous edge's endpoint.
+
+        Each edge's direction is auto-detected (and flipped if necessary) by
+        matching its endpoints against *either* end of the chain built so
+        far — not just the running chain's tail. Checking only the tail
+        would miss the case where the very first edge happens to be stored
+        "backwards" relative to the ring's traversal order: every later edge
+        would then fail to match the (wrongly oriented) tail and fall into
+        the non-adjacent fallback, corrupting the ring. Matching against
+        both ends lets a misoriented edge be prepended (flipped or not)
+        instead.
         """
         chain: list[list[float]] = []
         for node in edge_uri_nodes:
@@ -338,16 +346,19 @@ class _TopoResolver:
             if not seg:
                 continue
             if not chain:
-                chain.extend(seg)
+                chain = list(seg)
+                continue
+            if seg[0] == chain[-1]:
+                chain.extend(seg[1:])
+            elif seg[-1] == chain[-1]:
+                chain.extend(list(reversed(seg))[1:])
+            elif seg[-1] == chain[0]:
+                chain[0:0] = seg[:-1]
+            elif seg[0] == chain[0]:
+                chain[0:0] = list(reversed(seg))[:-1]
             else:
-                last = chain[-1]
-                if seg[0] == last:
-                    chain.extend(seg[1:])
-                elif seg[-1] == last:
-                    chain.extend(list(reversed(seg))[1:])
-                else:
-                    # Non-adjacent — append as-is (shouldn't happen in valid data)
-                    chain.extend(seg[1:])
+                # Non-adjacent — append as-is (shouldn't happen in valid data)
+                chain.extend(seg[1:])
         if chain and chain[0] != chain[-1]:
             chain.append(chain[0])
         return chain

@@ -154,7 +154,7 @@ transforms:
 ### CLI
 
 ```bash
-topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-n NUMBER] [-p]
+topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-k KEY:TYPE ...] [-n NUMBER] [-p]
 ```
 
 | Option | Description |
@@ -162,12 +162,23 @@ topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [
 | `-i`, `--input_data` | Input JSON file (supports glob) |
 | `-t`, `--ttl` | TTL file providing topology for referenced features (repeatable, supports glob) |
 | `-o`, `--output_file` | Output GeoJSON file |
-| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces`, `shells`, `solids` (default: `points,edges,faces`) |
-
-A feature that only ever resolves as a single Polygon or MultiPolygon (a Ring/Face, or a Shell/Solid several levels deeper — typically one whose topology is entirely TTL-referenced, with no top-level `points`/`edges` collection of its own) is still a valid source for `-m edges`/`-m points`: it's decomposed down to the edges/points that make it up, however many Ring/Face/Shell/Solid levels sit in between, rather than yielding nothing for those modes.
+| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces`, `shells`, `solids`, plus any key registered via `-k` (default: `points,edges,faces`) |
+| `-k`, `--objects` | Comma-separated `key:GeometryType` pairs registering additional top-level object keys to parse, beyond the built-in `edges`/`rings`/`faces`/`shells`/`solids` (e.g. `-k parcels:Polygon`) |
 | `-n`, `--number` | Max number of features to include |
 | `-p`, `--print` | Print output to stdout |
 | `-ns`, `--namespace` | `PREFIX=URI` (or a bare `URI`) [namespace/prefix declaration](#namespaceprefix-resolution) for resolving references (repeatable; the last-resort fallback below the input JSON's own `@context` and examples.yaml prefixes) |
+
+A feature that only ever resolves as a single Polygon or MultiPolygon (a Ring/Face, or a Shell/Solid several levels deeper — typically one whose topology is entirely TTL-referenced, with no top-level `points`/`edges` collection of its own) is still a valid source for `-m edges`/`-m points`: it's decomposed down to the edges/points that make it up, however many Ring/Face/Shell/Solid levels sit in between, rather than yielding nothing for those modes.
+
+#### `-k`/`--objects`: custom top-level object keys
+
+By default, only `data["edges"]`, `data["rings"]`, `data["faces"]`, `data["shells"]` and `data["solids"]` are scanned for features carrying a `topology` block. `-k` takes one `key:GeometryType` pair, or several comma-separated in a single `-k` argument (e.g. `-k a:TypeA,b:TypeB` — not `-k a:TypeA -k b:TypeB`), registering additional top-level keys to scan the same way, each tagged with whichever GeoJSON geometry type its resolved coordinates should be labeled as. This is how domain-specific collection names (e.g. a `"parcels"` array of Features with `topology.type: "Polygon"`, as used by CSDM's `extended_example.json`) get processed without renaming them to `"faces"`:
+
+```bash
+topo2geojson -i extended_example.json -m parcels -k parcels:Polygon -p
+```
+
+`-m parcels` is required alongside `-k parcels:Polygon` — registering the key only makes it eligible for parsing; `-m` still controls which resolved feature types actually make it into the output. A `Polygon`-typed entry whose `topology.references` is a ring of edge IDs has those edges chained (and flipped as needed to match orientation) into a single flat ring, the same as the built-in `faces` key does — not left as a raw list of unflattened edge segments.
 
 Examples:
 
@@ -177,6 +188,9 @@ topo2geojson -i tests/cube-with-void.json -m faces -o cube-faces.geojson
 
 # Input needs an external TTL to resolve its topology references
 topo2geojson -i tests/parcel1.json -t tests/topoobjects.ttl -m faces -o parcel1.geojson
+
+# Custom object key ("parcels") tagged as Polygon geometry
+topo2geojson -i extended_example.json -m parcels -k parcels:Polygon -p
 ```
 
 ## Tests
