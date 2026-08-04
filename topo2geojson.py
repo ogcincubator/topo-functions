@@ -281,6 +281,49 @@ def _chain_edges(edge_coord_lists: list) -> list:
     return chain
 
 
+def _resolve_polygon_rings(refs, geomsmap: dict, ttl_coords: dict, ttl_geoms: dict) -> list:
+    """
+    Resolve a Polygon topology's `references` (rings of edge IDs, or rings
+    given directly as a single geometry ref) to proper GeoJSON Polygon
+    coordinates: a list of rings, each ring a flat list of [x, y(, z)]
+    points.
+
+    Each ring's edge segments are chained (via `_chain_edges`) rather than
+    just concatenated, since adjacent edges aren't necessarily stored
+    head-to-tail or consistently oriented — naively substituting each edge
+    ID with its raw (still edge-shaped) coordinates would leave the ring
+    one level too deeply nested instead of a flat point list.
+    """
+    def lookup_coords(ref_id):
+        return geomsmap.get(ref_id) or ttl_coords.get(ref_id)
+
+    def lookup_geom(ref_id):
+        return ttl_geoms.get(ref_id)
+
+    rings = []
+    for ring_item in refs:
+        if isinstance(ring_item, list):
+            # ring_item is a list of edge IDs; resolve each to LineString coords
+            edge_segs = []
+            for edge_id in ring_item:
+                geom = lookup_geom(edge_id)
+                if geom and geom.get("type") == "LineString":
+                    edge_segs.append(geom["coordinates"])
+                else:
+                    c = lookup_coords(edge_id)
+                    if c is not None:
+                        edge_segs.append(c if isinstance(c[0], list) else [c])
+            if edge_segs:
+                ring = _chain_edges(edge_segs)
+                if ring:
+                    rings.append(ring)
+        else:
+            geom = lookup_geom(ring_item)
+            if geom:
+                rings.append(geom.get("coordinates", []))
+    return rings
+
+
 def _resolve_inline_topology(topo: dict, geomsmap: dict,
                              ttl_coords: dict, ttl_geoms: dict) -> dict | None:
     """
@@ -296,34 +339,11 @@ def _resolve_inline_topology(topo: dict, geomsmap: dict,
     def lookup_coords(ref_id):
         return geomsmap.get(ref_id) or ttl_coords.get(ref_id)
 
-    def lookup_geom(ref_id):
-        return ttl_geoms.get(ref_id)
-
     if "references" in topo:
         refs = topo["references"]
 
         if topo_type == "polygon":
-            rings = []
-            for ring_item in refs:
-                if isinstance(ring_item, list):
-                    # ring_item is a list of edge IDs; resolve each to LineString coords
-                    edge_segs = []
-                    for edge_id in ring_item:
-                        geom = lookup_geom(edge_id)
-                        if geom and geom.get("type") == "LineString":
-                            edge_segs.append(geom["coordinates"])
-                        else:
-                            c = lookup_coords(edge_id)
-                            if c is not None:
-                                edge_segs.append(c if isinstance(c[0], list) else [c])
-                    if edge_segs:
-                        ring = _chain_edges(edge_segs)
-                        if ring:
-                            rings.append(ring)
-                else:
-                    geom = lookup_geom(ring_item)
-                    if geom:
-                        rings.append(geom.get("coordinates", []))
+            rings = _resolve_polygon_rings(refs, geomsmap, ttl_coords, ttl_geoms)
             return {"type": "Polygon", "coordinates": rings} if rings else None
 
         elif topo_type in ("linestring", "edge"):
@@ -635,7 +655,16 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 print(f"Warning: expected type {topo['type'].lower()} does not match {feat_type}")
 
             if "references" in topo:
-                coords = _resolve_refs(topo["references"], geomsmap, ttl_coords)
+                if topo["type"].lower() == "polygon":
+                    # A Polygon's references are rings of edge IDs, whose
+                    # segments need chaining into flat ring point lists (see
+                    # _resolve_polygon_rings) — naively substituting each
+                    # edge ID with its own (still edge-shaped) coordinates
+                    # via _resolve_refs leaves the result one level too
+                    # deeply nested.
+                    coords = _resolve_polygon_rings(topo["references"], geomsmap, ttl_coords, ttl_geoms)
+                else:
+                    coords = _resolve_refs(topo["references"], geomsmap, ttl_coords)
             elif "directed_references" in topo or "shells" in topo:
                 # A Solid's topology carries its directed refs under "shells"
                 # (pointing at Shell ids) rather than "directed_references",

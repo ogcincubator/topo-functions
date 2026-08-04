@@ -576,3 +576,52 @@ def test_decompose_polygon_topology_skips_non_linestring_refs_without_crashing()
     # Must not raise; the nested Polygon ref simply can't be decomposed by
     # this fallback and is skipped.
     json.loads(output)
+
+
+def test_custom_object_polygon_ring_of_edges_is_not_over_nested():
+    """A named collection processed via -k/--objects (e.g. "parcels:Polygon")
+    whose Feature topology is type "Polygon" with `references` = rings of
+    edge IDs (matching real CSDM extended_example.json "parcels" data) must
+    chain those edges into a flat ring, the same as an individual top-level
+    Feature with the same topology shape does via _resolve_inline_topology.
+    Previously the collection-processing loop used the naive _resolve_refs
+    recursive substitution instead, which left each edge's own two-point
+    LineString nested as a sub-list inside the ring rather than flattened
+    into it — one array level too deep."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [
+            {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [10.0, 10.0]}},
+            {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [20.0, 20.0]}},
+            {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": [13.0, 17.0]}},
+        ],
+        "edges": [
+            {"type": "Feature", "id": "e1", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P1", "P2"]}},
+            {"type": "Feature", "id": "e2", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P2", "P3"]}},
+            {"type": "Feature", "id": "e3", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P3", "P1"]}},
+        ],
+        "parcels": [
+            {
+                "type": "Feature",
+                "id": "triangle",
+                "geometry": None,
+                "topology": {"type": "Polygon", "references": [["e1", "e2", "e3"]]},
+                "properties": {},
+            }
+        ],
+    }
+
+    output = process(json.dumps(data), mode="parcels", objects="parcels:Polygon", number=None)
+    parsed = json.loads(output)
+    feature = parsed["features"][0] if parsed.get("type") == "FeatureCollection" else parsed
+
+    assert feature["geometry"]["type"] == "Polygon"
+    ring = feature["geometry"]["coordinates"][0]
+    assert all(isinstance(pt, list) and len(pt) == 2 and all(isinstance(c, float) for c in pt)
+               for pt in ring), f"ring is over-nested: {ring!r}"
+    assert ring[0] == ring[-1]   # closed
+    assert len(ring) == 4        # 3 distinct vertices + closing point
