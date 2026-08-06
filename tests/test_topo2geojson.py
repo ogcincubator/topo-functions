@@ -697,3 +697,182 @@ def test_polygon_references_ring_resolves_correctly_when_first_edge_is_backwards
     assert ring[0] == ring[-1]
     assert len(ring) == 4
     assert set(map(tuple, ring[:-1])) == {tuple(P1), tuple(P2), tuple(P3)}
+
+
+# ---------------------------------------------------------------------------
+# JSON-FG `place` / per-feature-or-collection CRS resolution
+# ---------------------------------------------------------------------------
+# JSON-FG features carry their native-CRS geometry under `place` (with
+# `geometry` left null); the applicable CRS is resolved feature ->
+# containing FeatureCollection -> document root ("coordRefSys", then the
+# CSDM-style "horizontalCRS" convention). Real EPSG:7850 (GDA2020 MGA zone
+# 50) round-trip values are reused from test_reprojects_non_wgs84_input_via_pyproj.
+EPSG_7850_RAW = [404685.707, 6471518.197, 16.0]
+EPSG_7850_WGS84 = (115.99215095371282, -31.88815772870778)
+
+# A second, unrelated CRS (Web Mercator) with an independently-verified
+# round-trip pair, used to prove two different CRS declarations in the same
+# document are each honoured rather than one being applied to both.
+EPSG_3857_RAW = [17034676.21058977, -3182290.6656223023]
+EPSG_3857_WGS84 = (153.0251, -27.4698)
+
+
+def _place_point(pid: str, coords, coord_ref_sys=None) -> dict:
+    feature = {
+        "type": "Feature", "id": pid, "geometry": None,
+        "place": {"type": "Point", "coordinates": coords},
+        "properties": {},
+    }
+    if coord_ref_sys is not None:
+        feature["coordRefSys"] = coord_ref_sys
+    return feature
+
+
+def _points_collection(features: list, coord_ref_sys=None) -> dict:
+    fc = {"type": "FeatureCollection", "features": features}
+    if coord_ref_sys is not None:
+        fc["coordRefSys"] = coord_ref_sys
+    return fc
+
+
+def test_place_reprojects_using_root_horizontal_crs():
+    """Matches the real CSDM data shape: root "horizontalCRS", no
+    "coordRefSys" declared anywhere, features carry "place" with
+    geometry: null."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "horizontalCRS": "epsg:7850",
+        "points": [_points_collection([_place_point("P1", EPSG_7850_RAW)])],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    parsed = json.loads(output)
+    feat = parsed["features"][0]
+    assert feat["geometry"]["type"] == "Point"
+    lon, lat, elev = feat["geometry"]["coordinates"]
+    assert lon == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+    assert elev == 16.0
+
+
+def test_place_root_coord_ref_sys_takes_precedence_over_horizontal_crs():
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "coordRefSys": "EPSG:7850",
+        "horizontalCRS": "epsg:9999",   # bogus — must be ignored
+        "points": [_points_collection([_place_point("P1", EPSG_7850_RAW)])],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    lon, lat, _ = json.loads(output)["features"][0]["geometry"]["coordinates"]
+    assert lon == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+
+
+def test_place_collection_level_coord_ref_sys_used_when_feature_has_none():
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [_points_collection([_place_point("P1", EPSG_7850_RAW)], coord_ref_sys="EPSG:7850")],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    lon, lat, _ = json.loads(output)["features"][0]["geometry"]["coordinates"]
+    assert lon == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+
+
+def test_place_feature_level_coord_ref_sys_overrides_collection_and_root():
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "coordRefSys": "epsg:9999",       # bogus — must be ignored
+        "points": [_points_collection(
+            [_place_point("P1", EPSG_7850_RAW, coord_ref_sys="EPSG:7850")],
+            coord_ref_sys="epsg:9999",    # bogus — must also be ignored
+        )],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    lon, lat, _ = json.loads(output)["features"][0]["geometry"]["coordinates"]
+    assert lon == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+
+
+def test_existing_geometry_is_trusted_and_not_overwritten_by_place():
+    """A feature carrying both a populated `geometry` and a `place` must
+    keep `geometry` untouched — JSON-FG semantics treat an already-present
+    `geometry` as the authoritative WGS84 rendering."""
+    feature = {
+        "type": "Feature", "id": "P1",
+        "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+        "place": {"type": "Point", "coordinates": EPSG_7850_RAW},
+        "coordRefSys": "EPSG:7850",
+        "properties": {},
+    }
+    output = process(json.dumps(feature), mode="points", number=None)
+    assert json.loads(output)["geometry"]["coordinates"] == [1.0, 2.0]
+
+
+def test_place_without_any_crs_declared_is_assumed_already_wgs84():
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [_points_collection([_place_point("P1", [115.99, -31.89])])],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    assert json.loads(output)["features"][0]["geometry"]["coordinates"] == [115.99, -31.89]
+
+
+def test_two_different_crs_in_one_document_are_each_reprojected_independently():
+    """The core reason reprojection has to happen early rather than as one
+    final pass over the whole output: a document can legitimately mix
+    features on different CRSs (different FeatureCollections here), and
+    each has to be reprojected with its *own* transform, not one CRS
+    blanket-applied to everything."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [
+            _points_collection([_place_point("A1", EPSG_7850_RAW)], coord_ref_sys="EPSG:7850"),
+            _points_collection([_place_point("B1", EPSG_3857_RAW)], coord_ref_sys="EPSG:3857"),
+        ],
+    }
+    output = process(json.dumps(data), mode="points", number=None)
+    parsed = json.loads(output)
+    by_id = {f["id"]: f["geometry"]["coordinates"] for f in parsed["features"]}
+
+    assert by_id["A1"][0] == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert by_id["A1"][1] == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+    assert by_id["B1"][0] == pytest.approx(EPSG_3857_WGS84[0], abs=1e-6)
+    assert by_id["B1"][1] == pytest.approx(EPSG_3857_WGS84[1], abs=1e-6)
+
+
+def test_edge_spanning_two_different_source_crs_points_chains_correctly():
+    """An Edge referencing points sourced from two differently-CRS'd
+    collections must still resolve to a normal two-point LineString in
+    EPSG:4326 — proving downstream topology resolution never sees anything
+    but already-normalized coordinates, regardless of how many distinct
+    source CRSs contributed to the document."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature", "id": "e1", "geometry": None,
+                "topology": {"type": "Edge", "references": ["A1", "B1"]},
+                "properties": {},
+            }
+        ],
+        "points": [
+            _points_collection([_place_point("A1", EPSG_7850_RAW)], coord_ref_sys="EPSG:7850"),
+            _points_collection([_place_point("B1", EPSG_3857_RAW)], coord_ref_sys="EPSG:3857"),
+        ],
+    }
+    output = process(json.dumps(data), mode="edges", number=None)
+    parsed = json.loads(output)
+    edge = parsed["features"][0] if parsed.get("type") == "FeatureCollection" else parsed
+
+    assert edge["geometry"]["type"] == "LineString"
+    (a_lon, a_lat, *_), (b_lon, b_lat, *_) = edge["geometry"]["coordinates"]
+    assert a_lon == pytest.approx(EPSG_7850_WGS84[0], abs=1e-9)
+    assert a_lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
+    assert b_lon == pytest.approx(EPSG_3857_WGS84[0], abs=1e-6)
+    assert b_lat == pytest.approx(EPSG_3857_WGS84[1], abs=1e-6)

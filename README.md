@@ -80,6 +80,17 @@ with open("parcel1.json") as fh:
 
 `process()` returns a GeoJSON string (a `Feature` if the input was a single Feature, otherwise a `FeatureCollection`). If the input declares a GeoJSON `crs` member (e.g. `{"type": "name", "properties": {"name": "EPSG:7850"}}`), the output geometries are reprojected to WGS84 (EPSG:4326) using [pyproj](https://pyproj4.github.io/pyproj/) — no geopandas/shapely/GDAL required.
 
+### JSON-FG `place` and multi-CRS input
+
+A [JSON-FG](https://docs.ogc.org/DRAFTS/21-045.html) feature may carry its geometry under `place` (native CRS, `geometry` left `null`) instead of `geometry` (always WGS84). `place` is reprojected to EPSG:4326 and copied into `geometry` — a feature whose `geometry` is already populated is left untouched, since that's already trusted as the correct WGS84 rendering. The CRS applied to a given `place` is resolved in order:
+
+1. the feature's own `coordRefSys`
+2. its containing `FeatureCollection`'s `coordRefSys`
+3. the document root's `coordRefSys`
+4. the document root's `horizontalCRS` (a convention used by the CSDM/topo-feature example data, not part of JSON-FG itself)
+
+This reprojection happens up front, before any topology resolution — a document can legitimately mix features sourced from different CRSs (e.g. two different `FeatureCollection`s each declaring their own `coordRefSys`), and everything needs to already be in one consistent CRS by the time topology resolution starts chaining coordinates together (matching adjacent edge endpoints, etc.). A single reprojection pass over the finished output — the old approach — can't correctly handle more than one source CRS at a time.
+
 ### Namespace/prefix resolution
 
 A JSON topology reference may be a bare local name (`"LineP1P2"`) or carry a prefix the TTL graph doesn't itself declare (`"eg:LineP1P2"`). To reconcile these against the TTL's real URIs (`"http://somens/LineP1P2"`), pass an optional `namespaces` map of `{prefix: namespace_uri}` — for an unprefixed ref, every declared namespace is tried as `namespace_uri + local_name`; for a prefixed ref, the namespace registered for that exact prefix is tried first.

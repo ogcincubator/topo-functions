@@ -433,6 +433,125 @@ def _reproject_geometry(geom: dict | None, transformer: Transformer) -> None:
         geom["coordinates"] = _reproject_coords(geom["coordinates"], transformer)
 
 
+# ---------------------------------------------------------------------------
+# JSON-FG `place` / multi-CRS support
+# ---------------------------------------------------------------------------
+# JSON-FG (https://docs.ogc.org/DRAFTS/21-045.html) lets a Feature carry a
+# `place` geometry in its own native CRS (with `geometry` left null) instead
+# of — or alongside — the always-WGS84 `geometry`. `place`'s CRS is resolved
+# per JSON-FG's own scoping rules: the feature's own "coordRefSys" property,
+# else its containing FeatureCollection's "coordRefSys", else the document
+# root's "coordRefSys", else (a convention used by the CSDM/topo-feature
+# example data, not JSON-FG itself) the root's "horizontalCRS".
+
+_WGS84_CRS_ALIASES = {
+    "4326", "epsg:4326", "urn:ogc:def:crs:epsg::4326",
+    "crs84", "ogc:crs84", "urn:ogc:def:crs:ogc::crs84", "ogc:1.3:crs84",
+    "http://www.opengis.net/def/crs/epsg/0/4326",
+    "http://www.opengis.net/def/crs/ogc/1.3/crs84",
+}
+
+
+def _is_wgs84_crs(crs: str) -> bool:
+    return crs.strip().strip("[]").lower() in _WGS84_CRS_ALIASES
+
+
+def _get_wgs84_transformer(crs, cache: dict) -> Transformer | None:
+    """Return a cached pyproj Transformer(crs -> EPSG:4326), or None if *crs*
+    is falsy, already WGS84, or unparseable (a warning is printed and the
+    coordinates are then left untouched rather than raising).
+
+    A JSON-FG `coordRefSys` may also be a [horizontal, vertical] pair; only
+    the first (horizontal) element is used — full compound-CRS support
+    isn't implemented.
+    """
+    if not crs:
+        return None
+    if isinstance(crs, list):
+        crs = crs[0] if crs else None
+        if not crs:
+            return None
+    key = str(crs).strip()
+    if _is_wgs84_crs(key):
+        return None
+    if key in cache:
+        return cache[key]
+    try:
+        transformer = Transformer.from_crs(key.strip("[]"), "EPSG:4326", always_xy=True)
+    except Exception as e:
+        print(f"Warning: could not parse CRS {key!r} ({e}); leaving its coordinates unprojected")
+        transformer = None
+    cache[key] = transformer
+    return transformer
+
+
+def _normalize_geometries_to_wgs84(data: dict) -> None:
+    """
+    Walk the whole parsed document and reproject every feature's coordinate
+    data to EPSG:4326 in place, before any topology resolution runs.
+
+    This has to happen early rather than as a single pass over the final
+    assembled output: topology resolution chains raw point coordinates
+    together (matching adjacent edge endpoints, etc.), which only works if
+    every coordinate is already in one consistent CRS by the time that
+    happens — a single global final-reprojection step can't fix that up
+    afterwards if the source document mixes features on different CRSs.
+
+    Two independent mechanisms are handled:
+      - JSON-FG `place`: reprojected into `geometry` (which existing code
+        already reads everywhere), using the precedence described above.
+        Left alone if `geometry` is already populated (trusted as already
+        being the correct WGS84 rendering, per JSON-FG's own semantics).
+      - the legacy GeoJSON `crs` extension (a single CRS for the whole
+        document, declared once at the root or, when the root is itself a
+        single Feature, on that Feature): applied to `geometry` wherever
+        found, same as it always was — just moved here instead of a final
+        pass over the assembled output.
+
+    Features with neither `place` nor `geometry` (topology-only — the
+    common case) are untouched; their coordinates get synthesized later
+    from data that, by then, is already in EPSG:4326.
+    """
+    root_fallback_crs = data.get("coordRefSys") or data.get("horizontalCRS")
+    legacy_crs_name = ((data.get("crs") or {}).get("properties") or {}).get("name")
+    transformer_cache: dict = {}
+    reported: set = set()
+
+    def report(crs, via: str) -> None:
+        key = (str(crs), via)
+        if key not in reported:
+            reported.add(key)
+            print(f"Reprojecting {via} CRS {crs!r} -> EPSG:4326")
+
+    def walk(node, collection_crs) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "FeatureCollection":
+                collection_crs = node.get("coordRefSys") or collection_crs
+            elif node.get("type") == "Feature":
+                place = node.get("place")
+                if node.get("geometry") is None and isinstance(place, dict) and place.get("coordinates") is not None:
+                    crs = node.get("coordRefSys") or collection_crs or root_fallback_crs
+                    geom = {k: v for k, v in place.items() if k in ("type", "coordinates", "geometries")}
+                    transformer = _get_wgs84_transformer(crs, transformer_cache)
+                    if transformer:
+                        report(crs, "place")
+                        _reproject_geometry(geom, transformer)
+                    node["geometry"] = geom
+                elif node.get("geometry") is not None and legacy_crs_name:
+                    transformer = _get_wgs84_transformer(legacy_crs_name, transformer_cache)
+                    if transformer:
+                        report(legacy_crs_name, "geometry")
+                        _reproject_geometry(node["geometry"], transformer)
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk(v, collection_crs)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, collection_crs)
+
+    walk(data, None)
+
+
 def _clean_feature(feat: dict) -> dict:
     """Strip internal-only keys (e.g. `topology`, the stray `properties` some
     geometry dicts carry) down to a plain GeoJSON Feature."""
@@ -593,13 +712,15 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         ttl_coords = _NamespaceResolvingMap(ttl_coords, resolved_namespaces)
         ttl_components = _NamespaceResolvingMap(ttl_components, resolved_namespaces)
 
+    # Resolve place/geometry CRS(es) and reproject to EPSG:4326 up front —
+    # topology resolution below chains raw point coordinates together, which
+    # only works if everything is already in one consistent CRS by then.
+    _normalize_geometries_to_wgs84(data)
+
     count = 0
     is_feature = data.get("type") == "Feature"
     if is_feature:
         data = {"type": "FeatureCollection", "features": [data], "crs": data.get("crs")}
-
-    crs_name = ((data.get("crs") or {}).get("properties") or {}).get("name")
-    epsg_code = crs_name.split(":")[-1] if crs_name else "4326"
 
     geomsmap: dict = {}
     all_input_features = list(walk_features(data.get("features", [])))
@@ -772,13 +893,6 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         return "{}"
 
     clean_features = [_clean_feature(f) for f in data["features"]]
-
-    print(f"Source CRS EPSG:{epsg_code}")
-    if epsg_code != "4326":
-        transformer = Transformer.from_crs(f"EPSG:{epsg_code}", "EPSG:4326", always_xy=True)
-        for feature in clean_features:
-            _reproject_geometry(feature.get("geometry"), transformer)
-        print("Transformed to EPSG:4326")
 
     if is_feature and len(clean_features) == 1:
         output_data = clean_features[0]
