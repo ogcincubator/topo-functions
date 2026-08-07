@@ -15,12 +15,21 @@ Usage example:
 
 import json
 import glob as glob_module
+import logging
 import os
 from typing import Generator, List
 
 from pyproj import Transformer
 
 from topo_rdf_geojson import load_topo, load_topo_components
+
+
+# Module logger. Diagnostic/status output goes through this instead of print()
+# so it can be gated by the CLI's -v/--verbose flag (see _cli()). Without any
+# handler configured (e.g. when invoked from a transform host that hasn't set
+# up logging), Python's last-resort handler still emits WARNING and above to
+# stderr, so warnings keep surfacing while info/debug stay quiet.
+logger = logging.getLogger("topo2geojson")
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +90,7 @@ def load_ttl_geoms(ttl_files: list[str]):
     coords = {}
     components = {}
     for path in ttl_files:
-        print(f"Loading TTL: {path}")
+        logger.info("Loading TTL: %s", path)
         resolved = load_topo(path)
         for key, geom in resolved.items():
             geoms[key] = geom
@@ -99,7 +108,7 @@ def load_ttl_geoms(ttl_files: list[str]):
             if local not in components:
                 components[local] = comps
     unique = len({id(v) for v in geoms.values()})
-    print(f"  -> {unique} unique TTL geometries indexed")
+    logger.info("  -> %d unique TTL geometries indexed", unique)
     return geoms, coords, components
 
 
@@ -441,8 +450,7 @@ def _reproject_geometry(geom: dict | None, transformer: Transformer) -> None:
 # of — or alongside — the always-WGS84 `geometry`. `place`'s CRS is resolved
 # per JSON-FG's own scoping rules: the feature's own "coordRefSys" property,
 # else its containing FeatureCollection's "coordRefSys", else the document
-# root's "coordRefSys", else (a convention used by the CSDM/topo-feature
-# example data, not JSON-FG itself) the root's "horizontalCRS".
+# root's "coordRefSys", else (a convention used by 3D topology model) the root's "horizontalCRS".
 
 _WGS84_CRS_ALIASES = {
     "4326", "epsg:4326", "urn:ogc:def:crs:epsg::4326",
@@ -479,7 +487,7 @@ def _get_wgs84_transformer(crs, cache: dict) -> Transformer | None:
     try:
         transformer = Transformer.from_crs(key.strip("[]"), "EPSG:4326", always_xy=True)
     except Exception as e:
-        print(f"Warning: could not parse CRS {key!r} ({e}); leaving its coordinates unprojected")
+        logger.warning("could not parse CRS %r (%s); leaving its coordinates unprojected", key, e)
         transformer = None
     cache[key] = transformer
     return transformer
@@ -521,7 +529,7 @@ def _normalize_geometries_to_wgs84(data: dict) -> None:
         key = (str(crs), via)
         if key not in reported:
             reported.add(key)
-            print(f"Reprojecting {via} CRS {crs!r} -> EPSG:4326")
+            logger.info("Reprojecting %s CRS %r -> EPSG:4326", via, crs)
 
     def walk(node, collection_crs) -> None:
         if isinstance(node, dict):
@@ -784,8 +792,7 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             topo = feat["topology"]
             expected = topo["type"].lower() + "s"
             if expected != feat_type:
-                print(f"Warning: expected type {topo['type'].lower()} does not match {feat_type}")
-
+                logger.warning("expected type %s does not match %s", topo["type"].lower(), feat_type)
             if "references" in topo:
                 if topo["type"].lower() == "polygon":
                     # A Polygon's references are rings of edge IDs, whose
@@ -808,7 +815,7 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 for node in drs:
                     ref_id = node.get("ref")
                     if ref_id is None:
-                        print(f"Warning: directed reference missing 'ref' (got keys {list(node.keys())}), skipping")
+                        logger.warning("directed reference missing 'ref' (got keys %s), skipping", list(node.keys()))
                         continue
                     c = geomsmap.get(ref_id) or ttl_coords.get(ref_id)
                     if c is None:
@@ -821,7 +828,7 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                     if feat_type == "edges":
                         startindex = 1
             else:
-                print("No references found")
+                logger.warning("No references found")
                 continue
 
             feat["geometry"] = {
@@ -851,17 +858,17 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         if resolved_geom is None:
             resolved_geom = _resolve_inline_topology(topo, geomsmap, ttl_coords, ttl_geoms)
             if resolved_geom:
-                print(f"Feature {feat_id!r}: geometry resolved by chaining TTL topology references")
-
+                logger.info("Feature %r: geometry resolved by chaining TTL topology references", feat_id)
+                continue
         # Option 2: TTL has already fully resolved this feature's geometry by ID
         if feat_id:
             ttl_geom = ttl_geoms.get(feat_id)
             if ttl_geom:
                 resolved_geom = ttl_geom
-                print(f"Feature {feat_id!r}: geometry resolved directly from TTL index")
+                logger.info("Feature %r: geometry resolved directly from TTL index", feat_id)
 
         if resolved_geom is None:
-            print(f"Warning: could not resolve topology for feature {feat_id!r}")
+            logger.warning("could not resolve topology for feature %r", feat_id)
             continue
 
         resolved_feature = {**feature, "geometry": resolved_geom}
@@ -889,8 +896,7 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 data["features"].append(extra_feat)
 
     if not data["features"]:
-        print("No feature geometries generated")
-        return "{}"
+        return '{ "warning": "no feature geometries generated" }'
 
     clean_features = [_clean_feature(f) for f in data["features"]]
 
@@ -967,12 +973,12 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     Returns the GeoJSON string a host should bind to `output_data`.
     """
     if input_data is None:
-        print("seeking input_data in globals")
+        logger.debug("seeking input_data in globals")
         input_data = globals().get("input_data")
-        print("found input_data in globals")
+        logger.debug("found input_data in globals")
     if transform_metadata is None:
         transform_metadata = globals().get("transform_metadata")
-        print("found metadata in globals")
+        logger.debug("found metadata in globals")
     if input_data is None or transform_metadata is None:
         raise RuntimeError(
             "run_transform() requires input_data and transform_metadata, "
@@ -1002,7 +1008,7 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
             expanded.extend(_expand_ttl_glob(p, base_dirs) or [p])
         ttl_geoms_tm, ttl_coords_tm, ttl_components_tm = load_ttl_geoms(expanded)
 
-    print("running in transformer mode")
+    logger.info("running in transformer mode")
     return process(input_data, mode, objects, None, ttl_geoms_tm, ttl_coords_tm, ttl_components_tm,
                     transform_metadata=transform_metadata)
 
@@ -1047,6 +1053,8 @@ def _cli():
                            metavar="TTL_FILE",
                            help="TTL file(s) providing topology for referenced features (repeatable, supports glob)")
     argparser.add_argument("-p", "--print", action="store_true", help="Print output to stdout")
+    argparser.add_argument("-v", "--verbose", action="count", default=0,
+                           help="Verbose logging: -v for info, -vv for debug (default: warnings only)")
     argparser.add_argument("-n", "--number", default=None, help="Max number of features to include")
     argparser.add_argument("-m", "--mode", default="points,edges,faces",
                            help="Feature types to include (default: points,edges,faces)")
@@ -1061,6 +1069,10 @@ def _cli():
                                 "prefix references (e.g. \"LineP1P2\") against TTL URIs (e.g. "
                                 "\"http://somens/LineP1P2\"). Repeatable; PREFIX=URI or a bare URI.")
     args = argparser.parse_args()
+
+    # Map -v count to a logging level: none -> WARNING, -v -> INFO, -vv -> DEBUG.
+    level = logging.DEBUG if args.verbose >= 2 else logging.INFO if args.verbose else logging.WARNING
+    logging.basicConfig(level=level, format="%(message)s")
 
     # Expand TTL globs
     ttl_files = []
