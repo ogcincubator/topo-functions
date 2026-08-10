@@ -21,7 +21,13 @@ from typing import Generator, List
 
 from pyproj import Transformer
 
+from arc_geometry import ARC_TOPOLOGY_TYPES, arc_topology_to_geometry
 from topo_rdf_geojson import load_topo, load_topo_components
+
+# Default maximum chord-to-arc offset (sagitta) used when densifying arc/circle
+# topology, in the coordinate units of the input. Overridable per-transform via
+# the "max_offset" metadata key or the CLI --max-offset flag.
+DEFAULT_MAX_OFFSET = 0.02
 
 
 # Module logger. Diagnostic/status output goes through this instead of print()
@@ -700,8 +706,47 @@ _GEOM_TO_MODE = {
 }
 
 
+def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset):
+    """
+    Interpolate a CubicSpline topology into a densified LineString geometry.
+
+    Uses the `splines` package (via spline_geometry) to fit a natural cubic
+    spline through the resolved control points, clamped to the start/end
+    tangent directions when the topology supplies startTangentVector/
+    endTangentVector. Falls back to a straight polyline through the control
+    points if `splines` is not installed or interpolation fails, so the
+    transform still yields a reviewable geometry.
+    """
+    straight = {"type": "LineString", "coordinates": [list(p) for p in spline_pts]}
+
+    try:
+        from spline_geometry import densify_spline, tangent_from_references
+    except ImportError:
+        logger.warning("`splines` package not installed; falling back to a "
+                       "straight polyline for CubicSpline topology")
+        return straight
+
+    start_tangent = end_tangent = None
+    start_vec = topo.get("startTangentVector")
+    end_vec = topo.get("endTangentVector")
+    if isinstance(start_vec, dict) and isinstance(end_vec, dict):
+        start_tangent = tangent_from_references(
+            _resolve_refs(start_vec.get("references", []), geomsmap, ttl_coords))
+        end_tangent = tangent_from_references(
+            _resolve_refs(end_vec.get("references", []), geomsmap, ttl_coords))
+
+    try:
+        points = densify_spline(spline_pts, max_offset, start_tangent, end_tangent)
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully for any spline failure
+        logger.warning("could not interpolate spline (%s); using straight polyline", exc)
+        return straight
+
+    return {"type": "LineString", "coordinates": [list(p) for p in points]}
+
+
 def process(input_data, mode="points,edges,faces", objects=None , number=None, ttl_geoms=None, ttl_coords=None,
-            ttl_components=None, namespaces=None, transform_metadata=None) -> str:
+            ttl_components=None, namespaces=None, transform_metadata=None,
+            densify=False, max_offset=DEFAULT_MAX_OFFSET) -> str:
     if ttl_geoms is None:
         ttl_geoms = {}
     if ttl_coords is None:
@@ -851,17 +896,54 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             continue
 
         feat_id = feature.get("id")
+
+        # Densify arc/circle topology into true curved geometry (opt-in).
+        # arc_densify computes the chord vertices of the actual circular
+        # arc/circle described by the topology's point references, rather than
+        # the straight-line (chord) approximation the default path produces.
+        topo_type_lc = (topo.get("type") or "").lower()
+        if densify and topo_type_lc in ARC_TOPOLOGY_TYPES:
+            arc_coords = _resolve_refs(topo.get("references", []), geomsmap, ttl_coords)
+            try:
+                arc_geom = arc_topology_to_geometry(topo, arc_coords, max_offset)
+            except ValueError as exc:
+                logger.warning("could not densify arc feature %r: %s", feat_id, exc)
+                arc_geom = None
+            if arc_geom is not None:
+                feat_mode = _GEOM_TO_MODE.get(arc_geom["type"].lower(), "edges")
+                if feat_mode in mode and not (number and count >= int(number)):
+                    count += 1
+                    data["features"].append({**feature, "geometry": arc_geom})
+                continue
+            # Fall through to default handling if densification was not possible.
+        elif densify and topo_type_lc == "cubicspline":
+            # A CubicSpline is interpolated into a densified LineString via the
+            # `splines` package (see _densify_spline_topology); tangent vectors,
+            # when present, clamp the start/end directions.
+            spline_pts = [p for p in _resolve_refs(topo.get("references", []),
+                                                   geomsmap, ttl_coords) if p is not None]
+            if len(spline_pts) >= 2 and "edges" in mode \
+                    and not (number and count >= int(number)):
+                geom = _densify_spline_topology(topo, spline_pts, geomsmap,
+                                                ttl_coords, max_offset)
+                if geom is not None:
+                    count += 1
+                    data["features"].append({**feature, "geometry": geom})
+            continue
+
         resolved_geom = None
 
+        # Option 1: resolve inline topology references by chaining the
+        # referenced point/edge coordinates (from inline points or TTL). This
+        # is the straight-line (chord) approximation for arc/circle/spline
+        # topology when densification is off.
+        resolved_geom = _resolve_inline_topology(topo, geomsmap, ttl_coords, ttl_geoms)
+        if resolved_geom:
+            logger.info("Feature %r: geometry resolved by chaining TTL topology references", feat_id)
 
-        # Option 1: resolve inline topology references using TTL edge/point coords if required
-        if resolved_geom is None:
-            resolved_geom = _resolve_inline_topology(topo, geomsmap, ttl_coords, ttl_geoms)
-            if resolved_geom:
-                logger.info("Feature %r: geometry resolved by chaining TTL topology references", feat_id)
-                continue
-        # Option 2: TTL has already fully resolved this feature's geometry by ID
-        if feat_id:
+        # Option 2: TTL has already fully resolved this feature's geometry by
+        # ID (only when inline chaining above produced nothing).
+        if resolved_geom is None and feat_id:
             ttl_geom = ttl_geoms.get(feat_id)
             if ttl_geom:
                 resolved_geom = ttl_geom
@@ -992,6 +1074,10 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     except:
         objects = None
 
+    # Opt-in densification of arc/circle topology into true curved geometry.
+    densify = bool(transform_metadata.metadata.get("densify", False))
+    max_offset = float(transform_metadata.metadata.get("max_offset", DEFAULT_MAX_OFFSET))
+
     ttl_geoms_tm: dict = {}
     ttl_coords_tm: dict = {}
     ttl_components_tm: dict = {}
@@ -1010,7 +1096,7 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
 
     logger.info("running in transformer mode")
     return process(input_data, mode, objects, None, ttl_geoms_tm, ttl_coords_tm, ttl_components_tm,
-                    transform_metadata=transform_metadata)
+                    transform_metadata=transform_metadata, densify=densify, max_offset=max_offset)
 
 
 # Guard on `transform_metadata`'s presence so that a plain `import
@@ -1061,6 +1147,14 @@ def _cli():
 
     argparser.add_argument("-k", "--objects", default=None,
                            help="optional root level keys containing objects to convert")
+    argparser.add_argument("-d", "--densify", action="store_true",
+                           help="Densify Arc/ArcWithCenter/ArcByChord/CircleByCenter "
+                                "topology into true curved geometry via arc_densify "
+                                "(instead of a straight-chord approximation)")
+    argparser.add_argument("--max-offset", type=float, default=DEFAULT_MAX_OFFSET,
+                           dest="max_offset",
+                           help=f"Maximum chord-to-arc offset (sagitta) for --densify, "
+                                f"in input coordinate units (default: {DEFAULT_MAX_OFFSET})")
     argparser.add_argument("-ns", "--namespace", action="append", default=[],
                            metavar="PREFIX=URI",
                            help="Namespace/prefix declaration(s) to try (in addition to any "
@@ -1093,7 +1187,8 @@ def _cli():
         print(f"Processing {f}")
         with open(f) as fh:
             output = process(fh, args.mode, args.objects, args.number, ttl_geoms_map, ttl_coords_map,
-                              ttl_components_map, namespaces=args.namespace)
+                              ttl_components_map, namespaces=args.namespace,
+                              densify=args.densify, max_offset=args.max_offset)
         if args.print:
             print(output)
         if args.output_file:

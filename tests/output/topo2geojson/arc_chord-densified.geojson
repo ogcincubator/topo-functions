@@ -1,0 +1,35 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [
+        10.0,
+        10.0
+      ],
+      [
+        12.372717321050473,
+        12.62446616645849
+      ],
+      [
+        14.832151682602316,
+        15.167848317397684
+      ],
+      [
+        17.375533833541525,
+        17.62728267894954
+      ],
+      [
+        20.0,
+        20.0
+      ]
+    ]
+  },
+  "properties": {
+    "arcLength": 25.615
+  },
+  "id": "chord1",
+  "@context": [
+    "https://opengeospatial.github.io/bblocks/annotated-schemas/geo/features/featureCollection/context.jsonld"
+  ]
+}

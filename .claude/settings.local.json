@@ -4,7 +4,9 @@
       "Bash(pip show *)",
       "Bash(python -c \"import pkgutil,sys; [print\\(m.name\\) for m in pkgutil.iter_modules\\(\\) if 'bblock' in m.name.lower\\(\\)]\")",
       "Bash(python -m pytest tests/test_topo2geojson.py -q)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Read(//c/repos/ngsc/topo-feature/_sources/features/topo-arc//**)",
+      "Read(//c/repos/ngsc/topo-feature/_sources/features/topo-arc/examples//**)"
     ]
   }
 }

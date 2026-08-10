@@ -12,6 +12,8 @@ requires-python = ">=3.9"
 dependencies = [
     "rdflib>=6.0",
     "pyproj>=3.5",
+    "splines>=0.3",
+    "numpy>=1.21",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,8 @@ geojson = [
 ]
 test = [
     "pyproj>=3.5",
+    "splines>=0.3",
+    "numpy>=1.21",
     "pytest>=7.0",
 ]
 
@@ -28,7 +32,14 @@ topo-rdf-geojson = "topo_rdf_geojson:_cli"
 topo2geojson = "topo2geojson:_cli"
 
 [tool.setuptools]
-py-modules = ["topo_rdf_geojson", "topo2geojson"]
+py-modules = [
+    "topo_rdf_geojson",
+    "topo2geojson",
+    "arc_densify",
+    "arc_geometry",
+    "arc_to_geojson_writer",
+    "spline_geometry",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
