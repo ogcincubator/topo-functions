@@ -916,10 +916,13 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                     data["features"].append({**feature, "geometry": arc_geom})
                 continue
             # Fall through to default handling if densification was not possible.
-        elif densify and topo_type_lc == "cubicspline":
-            # A CubicSpline is interpolated into a densified LineString via the
-            # `splines` package (see _densify_spline_topology); tangent vectors,
-            # when present, clamp the start/end directions.
+        elif topo_type_lc == "cubicspline":
+            # A CubicSpline is always fitted as a proper spline curve via the
+            # `splines` package (see _densify_spline_topology), regardless of
+            # the `densify` flag — a spline's defining shape is the fitted
+            # curve, not a chord through its control points. Tangent vectors,
+            # when present, clamp the start/end directions. `max_offset`
+            # controls the sampling density of the fitted curve.
             spline_pts = [p for p in _resolve_refs(topo.get("references", []),
                                                    geomsmap, ttl_coords) if p is not None]
             if len(spline_pts) >= 2 and "edges" in mode \

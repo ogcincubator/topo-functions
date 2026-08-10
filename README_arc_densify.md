@@ -185,6 +185,13 @@ Two small bridge modules connect the topology descriptions to the interpolators:
   interpolated in 3-D (Z carried through the output vertices), otherwise the
   output stays 2-D.
 
+  Spline fitting is **unconditional**: whenever a `CubicSpline` topology is
+  encountered it is rendered as the fitted curve, in both the Points-n-Edges
+  and Densified-Curves transforms (and regardless of the `--densify` flag) — a
+  spline's defining shape *is* the fitted curve, not a chord through its
+  control points. The `Arc`/`Circle` types, by contrast, are only rendered as
+  true curves when densification is enabled.
+
 ### Running the densified transform
 
 ```bash
