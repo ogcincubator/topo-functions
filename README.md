@@ -3,7 +3,7 @@
 Two modules for converting topology-based feature models to GeoJSON:
 
 - **`topo_rdf_geojson`** — reads an RDF Turtle topology model (geojson-topo vocabulary) and returns a dict of GeoJSON geometry objects for every feature, indexed by both full URI string and qname (`prefix:local`).
-- **`topo2geojson`** — converts topo-feature JSON (points/edges/rings/faces/shells/solids, inline or referenced) into GeoJSON. Some inputs are fully self-contained; others only carry bare topology references to features that live in a separate RDF Turtle model, in which case `topo2geojson` resolves them via `topo_rdf_geojson.load_topo()`.
+- **`topo2geojson`** — converts topo-feature JSON (points/edges/rings/faces/shells/solids, inline or referenced) into GeoJSON. Some inputs are fully self-contained; others only carry bare topology references to features that live in a separate RDF Turtle model, in which case `topo2geojson` resolves them via `topo_rdf_geojson.load_topo()`. It also renders the non-linear [topo-arc](#arc-circle-and-spline-topology-curved-geometry) topology types (`Arc`, `ArcWithCenter`, `ArcByChord`, `CircleByCenter`, `CubicSpline`) as true curved geometry.
 
 ## Installation
 
@@ -80,6 +80,86 @@ with open("parcel1.json") as fh:
 
 `process()` returns a GeoJSON string (a `Feature` if the input was a single Feature, otherwise a `FeatureCollection`). If the input declares a GeoJSON `crs` member (e.g. `{"type": "name", "properties": {"name": "EPSG:7850"}}`), the output geometries are reprojected to WGS84 (EPSG:4326) using [pyproj](https://pyproj4.github.io/pyproj/) — no geopandas/shapely/GDAL required.
 
+### Arc, circle and spline topology (curved geometry)
+
+Beyond the straight-line topology types, `topo2geojson` renders the non-linear
+`topo-arc` building-block topology types — which describe curves by *reference*
+to point features rather than by storing vertices — as true curved GeoJSON. The geometry each type leaves implicit
+(a circle centre, a sweep direction, a spline's shape) is computed by two
+companion modules, `arc_geometry` (via [`arc_densify`](README_arc_densify.md))
+and `spline_geometry` (via the [`splines`](https://pypi.org/project/splines/)
+package); see [`README_arc_densify.md`](README_arc_densify.md) for the geometry
+details.
+
+| `topology.type` | `references` (ordered points) | Extra properties | GeoJSON output |
+|-----------------|-------------------------------|------------------|----------------|
+| `Arc` | start, point-on-arc, end (3) | — | `LineString` (densified arc) |
+| `ArcWithCenter` | start, end, centre (3) | `orientation`: `"cw"`/`"ccw"` | `LineString` (densified arc) |
+| `ArcByChord` | start, end (2) | `radius`, `orientation`: `"cw"`/`"ccw"` | `LineString` (densified arc) |
+| `CircleByCenter` | centre (1) | `radius` | `Polygon` (densified circle) |
+| `CubicSpline` | control points (≥3, or ≥2 with tangents) | optional `startTangentVector` / `endTangentVector` | `LineString` (fitted spline) |
+
+The `references` resolve like any other topology reference — inline point
+features, or bare/prefixed IDs resolved against a TTL model (see
+[Namespace/prefix resolution](#namespaceprefix-resolution)). `orientation` and
+the tangent vectors are read from the feature's `topology` block. For
+`ArcByChord`/`CircleByCenter`, `radius` is read from the `topology` block if
+present, otherwise from the feature's own `radius` property (per the topo-arc
+schema, which allows the radius to live at either level). A
+`startTangentVector`/`endTangentVector` is itself a small object with a
+two-point `references` list; the tangent direction is the vector from the first
+referenced point to the second.
+
+**When curves are produced:**
+
+- **`CubicSpline` is always fitted** as a spline curve whenever the type is
+  encountered — a spline's defining shape *is* the fitted curve, not a chord
+  through its control points. When `startTangentVector`/`endTangentVector` are
+  supplied, the spline is *clamped* so its start/end directions match them.
+- **`Arc`/`ArcWithCenter`/`ArcByChord`/`CircleByCenter` are rendered as true
+  curves only when densification is enabled** (see below). Otherwise their point
+  references are chained directly into a straight-line (chord) approximation.
+
+**Additional spline output.** When a `CubicSpline` is rendered:
+
+- in `points` mode, its original control points are also emitted as `Point`
+  features (`properties.role = "spline-control-point"`), so the referenced
+  points show up even when they live only in a TTL model. Points already
+  emitted inline are not duplicated.
+- when `startTangentVector`/`endTangentVector` are present, each tangent is
+  drawn (in `edges` mode) as its own two-point `LineString`
+  (`properties.role = "spline-tangent"`), styled distinctly from the fitted
+  curve using [simplestyle-spec](https://github.com/mapbox/simplestyle-spec)
+  properties — a `stroke` colour plus a `stroke-dasharray` for dashed
+  rendering. GeoJSON has no native styling, so these are advisory properties
+  honoured by simplestyle-aware renderers.
+
+**Parameters:**
+
+| Parameter | `process()` arg | Transform metadata | CLI flag | Meaning |
+|-----------|-----------------|--------------------|----------|---------|
+| Densify arcs/circles | `densify=True` | `densify: true` | `-d`, `--densify` | Render `Arc`/`Circle` types as true curves rather than chords (splines are always fitted regardless) |
+| Curve tolerance | `max_offset=0.02` | `max_offset: 0.02` | `--max-offset 0.02` | Maximum chord-to-curve offset (sagitta), in input coordinate units, for densified arcs and fitted splines. Smaller → more vertices. Default `0.02` |
+
+Both 2-D and 3-D control points are supported; a spline whose points carry a
+Z value is interpolated in 3-D (Z carried through to the output vertices).
+
+```python
+from topo2geojson import process
+
+# Arc/circle features densified into true curves; splines fitted either way.
+with open("arc_by_center.json") as fh:
+    output = process(fh, mode="edges,faces",
+                     densify=True, max_offset=0.02,
+                     ttl_geoms=ttl_geoms, ttl_coords=ttl_coords)
+```
+
+```bash
+# CLI equivalent
+topo2geojson -i arc_by_center.json -t referenced-objects.ttl \
+    -m edges,faces --densify --max-offset 0.02 -p
+```
+
 ### JSON-FG `place` and multi-CRS input
 
 A [JSON-FG](https://docs.ogc.org/DRAFTS/21-045.html) feature may carry its geometry under `place` (native CRS, `geometry` left `null`) instead of `geometry` (always WGS84). `place` is reprojected to EPSG:4326 and copied into `geometry` — a feature whose `geometry` is already populated is left untouched, since that's already trusted as the correct WGS84 rendering. The CRS applied to a given `place` is resolved in order:
@@ -115,6 +195,8 @@ output = process(fh, mode="faces", number=None,
 - `transform_metadata` — an object exposing `.metadata`, a dict of parameters for this transform run:
   - `"mode"` — same comma-separated feature-type list as the CLI `-m` flag (default `"points,edges,faces"`)
   - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
+  - `"densify"` — `true` to render `Arc`/`ArcWithCenter`/`ArcByChord`/`CircleByCenter` topology as true curves rather than chord approximations (`CubicSpline` is always fitted regardless); default `false`. See [Arc, circle and spline topology](#arc-circle-and-spline-topology-curved-geometry)
+  - `"max_offset"` — maximum chord-to-curve offset (sagitta) for densified arcs and fitted splines, in input coordinate units; default `0.02`
   - `"namespaces"`/`"prefixes"` — optional `{prefix: namespace_uri}` fallback map for [namespace/prefix resolution](#namespaceprefix-resolution), used below the input JSON's own `@context` and any examples.yaml prefixes the host exposes via `transform_metadata.context`
 
 Call `run_transform()` to get the GeoJSON string to bind to `output_data`. Both arguments are optional — if omitted, they're picked up from `input_data`/`transform_metadata` globals (e.g. a host that `exec`s the whole module, or one that sets them as module attributes after importing it):
@@ -165,7 +247,7 @@ transforms:
 ### CLI
 
 ```bash
-topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-k KEY:TYPE ...] [-n NUMBER] [-p]
+topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-k KEY:TYPE ...] [-n NUMBER] [-d] [--max-offset F] [-p]
 ```
 
 | Option | Description |
@@ -173,9 +255,11 @@ topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [
 | `-i`, `--input_data` | Input JSON file (supports glob) |
 | `-t`, `--ttl` | TTL file providing topology for referenced features (repeatable, supports glob) |
 | `-o`, `--output_file` | Output GeoJSON file |
-| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces`, `shells`, `solids`, plus any key registered via `-k` (default: `points,edges,faces`) |
+| `-m`, `--mode` | Comma-separated feature types to include: `points`, `edges`, `faces`, `shells`, `solids`, plus any key registered via `-k` (default: `points,edges,faces`). Densified arcs are `edges`; a densified circle is `faces` |
 | `-k`, `--objects` | Comma-separated `key:GeometryType` pairs registering additional top-level object keys to parse, beyond the built-in `edges`/`rings`/`faces`/`shells`/`solids` (e.g. `-k parcels:Polygon`) |
 | `-n`, `--number` | Max number of features to include |
+| `-d`, `--densify` | Render `Arc`/`ArcWithCenter`/`ArcByChord`/`CircleByCenter` topology as true curved geometry instead of a straight-chord approximation (`CubicSpline` is always fitted). See [Arc, circle and spline topology](#arc-circle-and-spline-topology-curved-geometry) |
+| `--max-offset` | Maximum chord-to-curve offset (sagitta) for `--densify` and spline fitting, in input coordinate units (default `0.02`) |
 | `-p`, `--print` | Print output to stdout |
 | `-ns`, `--namespace` | `PREFIX=URI` (or a bare `URI`) [namespace/prefix declaration](#namespaceprefix-resolution) for resolving references (repeatable; the last-resort fallback below the input JSON's own `@context` and examples.yaml prefixes) |
 
@@ -202,6 +286,9 @@ topo2geojson -i tests/parcel1.json -t tests/topoobjects.ttl -m faces -o parcel1.
 
 # Custom object key ("parcels") tagged as Polygon geometry
 topo2geojson -i extended_example.json -m parcels -k parcels:Polygon -p
+
+# Arc/circle topology densified into true curves (splines fitted either way)
+topo2geojson -i arc_by_center.json -t referenced-objects.ttl -m edges,faces --densify --max-offset 0.02 -p
 ```
 
 ## Tests
@@ -215,5 +302,9 @@ Tests persist the GeoJSON they generate under `tests/output/`, split by submodul
 
 ## Dependencies
 
-- [rdflib](https://rdflib.readthedocs.io/) >= 6.0 (both modules)
-- [pyproj](https://pyproj4.github.io/pyproj/) >= 3.5 (`topo2geojson` only, for CRS reprojection; install via the `geojson` extra)
+- [rdflib](https://rdflib.readthedocs.io/) >= 6.0 (both modules) — MIT/BSD
+- [pyproj](https://pyproj4.github.io/pyproj/) >= 3.5 (`topo2geojson`, for CRS reprojection) — MIT
+- [splines](https://pypi.org/project/splines/) >= 0.3 (`topo2geojson`, for `CubicSpline` fitting) — MIT
+- [numpy](https://numpy.org/) >= 1.21 (required by `splines`) — BSD-3-Clause
+
+All third-party dependencies are distributed under permissive (MIT / BSD-3-Clause) licences compatible with this project's MIT licence; full licence texts and attributions are in [`LICENCE.md`](LICENCE.md).

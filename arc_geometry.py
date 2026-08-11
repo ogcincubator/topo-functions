@@ -181,6 +181,7 @@ def arc_topology_to_geometry(
     topo: dict[str, Any],
     coords: list[Coord],
     max_offset: float,
+    feature_radius: float | None = None,
 ) -> dict[str, Any] | None:
     """
     Convert a resolved arc/circle topology to a GeoJSON geometry dict.
@@ -189,14 +190,20 @@ def arc_topology_to_geometry(
     ----------
     topo:
         The feature's inline `topology` block. Must carry `type` and, for
-        ArcByChord/CircleByCenter, `radius`, and for ArcWithCenter/ArcByChord,
-        `orientation`.
+        ArcWithCenter/ArcByChord, `orientation`. `radius` (required for
+        ArcByChord/CircleByCenter) may live on the topology block or, per the
+        topo-arc schema, be supplied as a feature-level property via
+        `feature_radius`.
     coords:
         The topology's `references` already resolved to coordinates, in the
         same order as the references list.
     max_offset:
         Maximum permitted chord-to-arc offset (sagitta), in the coordinate
         units.
+    feature_radius:
+        Fallback radius taken from the feature's own `radius` property, used
+        for ArcByChord/CircleByCenter when the topology block itself does not
+        carry a `radius`.
 
     Returns
     -------
@@ -208,6 +215,11 @@ def arc_topology_to_geometry(
     topo_type = (topo.get("type") or "").lower()
     if topo_type not in ARC_TOPOLOGY_TYPES:
         return None
+
+    def _radius() -> float | None:
+        """Radius from the topology block, else the feature-level property."""
+        r = topo.get("radius")
+        return r if r is not None else feature_radius
 
     if topo_type == "arc":
         if len(coords) < 3:
@@ -245,7 +257,7 @@ def arc_topology_to_geometry(
     if topo_type == "arcbychord":
         if len(coords) < 2:
             return None
-        radius = topo.get("radius")
+        radius = _radius()
         if radius is None:
             return None
         orientation = (topo.get("orientation") or "ccw").lower()
@@ -264,7 +276,7 @@ def arc_topology_to_geometry(
     # topo_type == "circlebycenter"
     if not coords:
         return None
-    radius = topo.get("radius")
+    radius = _radius()
     if radius is None:
         return None
     ring = densify_full_circle(coords[0], float(radius), max_offset)

@@ -744,6 +744,76 @@ def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset)
     return {"type": "LineString", "coordinates": [list(p) for p in points]}
 
 
+# simplestyle-spec (https://github.com/mapbox/simplestyle-spec) properties used
+# to distinguish a spline's tangent segments from the fitted curve. `stroke`
+# (colour) is simplestyle; `stroke-dasharray` is a widely-supported extension
+# for dashed rendering. GeoJSON itself carries no styling, so these are advisory
+# properties honoured by simplestyle-aware renderers.
+_TANGENT_STYLE = {
+    "stroke": "#d62728",
+    "stroke-width": 2,
+    "stroke-opacity": 1,
+    "stroke-dasharray": "6 4",
+}
+
+
+def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset, mode):
+    """
+    Build the output GeoJSON features for a CubicSpline topology:
+
+    - the fitted spline curve as a LineString (when `edges` in mode);
+    - the original control points as Point features (when `points` in mode);
+    - the start/end tangent segments (if the topology supplies
+      startTangentVector/endTangentVector) as separately-styled dashed
+      LineStrings (when `edges` in mode).
+    """
+    feat_id = feature.get("id")
+    refs = topo.get("references", [])
+    resolved = _resolve_refs(refs, geomsmap, ttl_coords)
+    spline_pts = [p for p in resolved if p is not None]
+
+    features: list[dict] = []
+
+    # Fitted spline curve.
+    if "edges" in mode and len(spline_pts) >= 2:
+        geom = _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset)
+        if geom is not None:
+            features.append({**feature, "geometry": geom})
+
+    # Original control points.
+    if "points" in mode:
+        for ref, coord in zip(refs, resolved):
+            if coord is None:
+                continue
+            features.append({
+                "type": "Feature",
+                "id": ref if isinstance(ref, str) else None,
+                "geometry": {"type": "Point", "coordinates": list(coord)},
+                "properties": {"role": "spline-control-point", "spline": feat_id},
+            })
+
+    # Start/end tangent segments, drawn with a distinct dashed style.
+    if "edges" in mode:
+        for position, key in (("start", "startTangentVector"),
+                              ("end", "endTangentVector")):
+            vec = topo.get(key)
+            if not isinstance(vec, dict):
+                continue
+            seg = [p for p in _resolve_refs(vec.get("references", []), geomsmap, ttl_coords)
+                   if p is not None]
+            if len(seg) >= 2:
+                features.append({
+                    "type": "Feature",
+                    "id": f"{feat_id}-{position}-tangent" if feat_id else None,
+                    "geometry": {"type": "LineString",
+                                 "coordinates": [list(p) for p in seg]},
+                    "properties": {"role": "spline-tangent", "position": position,
+                                   "spline": feat_id, **_TANGENT_STYLE},
+                })
+
+    return features
+
+
 def process(input_data, mode="points,edges,faces", objects=None , number=None, ttl_geoms=None, ttl_coords=None,
             ttl_components=None, namespaces=None, transform_metadata=None,
             densify=False, max_offset=DEFAULT_MAX_OFFSET) -> str:
@@ -904,8 +974,14 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         topo_type_lc = (topo.get("type") or "").lower()
         if densify and topo_type_lc in ARC_TOPOLOGY_TYPES:
             arc_coords = _resolve_refs(topo.get("references", []), geomsmap, ttl_coords)
+            # ArcByChord/CircleByCenter radius may be a feature-level property
+            # (topo-arc schema) rather than on the topology block itself.
+            feature_radius = feature.get("radius")
+            if feature_radius is None:
+                feature_radius = (feature.get("properties") or {}).get("radius")
             try:
-                arc_geom = arc_topology_to_geometry(topo, arc_coords, max_offset)
+                arc_geom = arc_topology_to_geometry(topo, arc_coords, max_offset,
+                                                    feature_radius=feature_radius)
             except ValueError as exc:
                 logger.warning("could not densify arc feature %r: %s", feat_id, exc)
                 arc_geom = None
@@ -918,20 +994,22 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             # Fall through to default handling if densification was not possible.
         elif topo_type_lc == "cubicspline":
             # A CubicSpline is always fitted as a proper spline curve via the
-            # `splines` package (see _densify_spline_topology), regardless of
-            # the `densify` flag — a spline's defining shape is the fitted
-            # curve, not a chord through its control points. Tangent vectors,
-            # when present, clamp the start/end directions. `max_offset`
-            # controls the sampling density of the fitted curve.
-            spline_pts = [p for p in _resolve_refs(topo.get("references", []),
-                                                   geomsmap, ttl_coords) if p is not None]
-            if len(spline_pts) >= 2 and "edges" in mode \
-                    and not (number and count >= int(number)):
-                geom = _densify_spline_topology(topo, spline_pts, geomsmap,
-                                                ttl_coords, max_offset)
-                if geom is not None:
-                    count += 1
-                    data["features"].append({**feature, "geometry": geom})
+            # `splines` package (see _spline_topology_to_features), regardless
+            # of the `densify` flag — a spline's defining shape is the fitted
+            # curve, not a chord through its control points. In `points` mode
+            # the original control points are also emitted, and any start/end
+            # tangent vectors are drawn as separately-styled dashed segments.
+            existing_ids = {f.get("id") for f in data["features"] if f.get("id")}
+            for sf in _spline_topology_to_features(feature, topo, geomsmap,
+                                                   ttl_coords, max_offset, mode):
+                # Don't re-emit a control point already output as an inline point.
+                if (sf.get("properties") or {}).get("role") == "spline-control-point" \
+                        and sf.get("id") in existing_ids:
+                    continue
+                if number and count >= int(number):
+                    break
+                count += 1
+                data["features"].append(sf)
             continue
 
         resolved_geom = None

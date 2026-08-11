@@ -192,6 +192,12 @@ Two small bridge modules connect the topology descriptions to the interpolators:
   control points. The `Arc`/`Circle` types, by contrast, are only rendered as
   true curves when densification is enabled.
 
+  In `points` mode a spline's original control points are also emitted as
+  `Point` features, and any start/end tangent vectors are drawn as separate
+  dashed, distinctly-coloured `LineString` segments (simplestyle-spec `stroke`
+  / `stroke-dasharray` properties). See the *Arc, circle and spline topology*
+  section of [`README.md`](README.md) for details.
+
 ### Running the densified transform
 
 ```bash

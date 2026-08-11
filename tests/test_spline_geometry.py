@@ -252,3 +252,85 @@ def test_process_fits_cubic_spline_with_tangents_when_densify_off():
     assert clamped_coords[-1] == list(P2)
     assert len(clamped_coords) > 5
     assert clamped_coords != natural_coords
+
+
+def _spline_with_tangents_from_ttl_points():
+    """A spline feature whose control/tangent points come from a TTL model
+    (no inline point features), mirroring the topo-arc examples."""
+    ttl_coords = {
+        "P1": list(P1), "Px1": list(Px1), "Px2": list(Px2), "Px3": list(Px3),
+        "P2": list(P2), "PVS": [9.0, 10.0], "PVE": [20.0, 21.0],
+    }
+    feature = {
+        "type": "Feature", "id": "spline2", "geometry": None, "properties": None,
+        "topology": {
+            "type": "CubicSpline",
+            "references": ["P1", "Px1", "Px2", "Px3", "P2"],
+            "startTangentVector": {"references": ["PVS", "P1"]},
+            "endTangentVector": {"references": ["P2", "PVE"]},
+        },
+    }
+    return feature, ttl_coords
+
+
+def test_spline_points_mode_emits_original_control_points():
+    feature, ttl_coords = _spline_with_tangents_from_ttl_points()
+    output = process(json.dumps(feature), mode="points,edges", ttl_coords=ttl_coords)
+    _persist("spline-with-tangents-points-edges.geojson", output)
+    result = json.loads(output)
+    control = [f for f in result["features"]
+               if (f.get("properties") or {}).get("role") == "spline-control-point"]
+    ids = {f.get("id") for f in control}
+    assert ids == {"P1", "Px1", "Px2", "Px3", "P2"}
+    assert all(f["geometry"]["type"] == "Point" for f in control)
+
+
+def test_spline_points_mode_not_duplicated_when_points_are_inline():
+    """When control points are supplied inline (and thus already emitted as
+    points), they are not emitted a second time by the spline path."""
+    ids = [("P1", P1), ("Px1", Px1), ("Px2", Px2), ("Px3", Px3), ("P2", P2)]
+    data = {
+        "type": "FeatureCollection",
+        "features": _points_collection(*ids) + [{
+            "type": "Feature", "id": "spline3", "geometry": None,
+            "topology": {"type": "CubicSpline",
+                         "references": [i for i, _ in ids]},
+        }],
+    }
+    result = json.loads(process(json.dumps(data), mode="points,edges"))
+    p1_features = [f for f in result["features"] if f.get("id") == "P1"]
+    assert len(p1_features) == 1  # not duplicated
+
+
+def test_spline_tangent_segments_emitted_with_distinct_dashed_style():
+    feature, ttl_coords = _spline_with_tangents_from_ttl_points()
+    result = json.loads(process(json.dumps(feature), mode="edges",
+                                ttl_coords=ttl_coords))
+    tangents = [f for f in result["features"]
+                if (f.get("properties") or {}).get("role") == "spline-tangent"]
+    assert len(tangents) == 2
+    positions = {f["properties"]["position"] for f in tangents}
+    assert positions == {"start", "end"}
+    for t in tangents:
+        props = t["properties"]
+        assert t["geometry"]["type"] == "LineString"
+        assert len(t["geometry"]["coordinates"]) == 2  # a straight tangent segment
+        # simplestyle-spec colour + dashed styling to distinguish from the curve.
+        assert props["stroke"] and props["stroke-dasharray"]
+    start = [f for f in tangents if f["properties"]["position"] == "start"][0]
+    assert start["geometry"]["coordinates"] == [[9.0, 10.0], list(P1)]
+
+
+def test_spline_tangent_segments_absent_when_no_tangents():
+    ids = [("P1", P1), ("Px1", Px1), ("Px2", Px2), ("P2", P2)]
+    data = {
+        "type": "FeatureCollection",
+        "features": _points_collection(*ids) + [{
+            "type": "Feature", "id": "spline4", "geometry": None,
+            "topology": {"type": "CubicSpline", "references": [i for i, _ in ids]},
+        }],
+    }
+    result = json.loads(process(json.dumps(data), mode="edges"))
+    tangents = [f for f in result["features"]
+                if (f.get("properties") or {}).get("role") == "spline-tangent"]
+    assert tangents == []

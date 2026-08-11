@@ -100,8 +100,83 @@
           ]
         ]
       },
-      "properties": {},
+      "properties": null,
       "id": "spline2"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.0,
+          10.0
+        ]
+      },
+      "properties": {
+        "role": "spline-control-point",
+        "spline": "spline2"
+      },
+      "id": "P1"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          14.0,
+          12.5
+        ]
+      },
+      "properties": {
+        "role": "spline-control-point",
+        "spline": "spline2"
+      },
+      "id": "Px1"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          12.5,
+          15.0
+        ]
+      },
+      "properties": {
+        "role": "spline-control-point",
+        "spline": "spline2"
+      },
+      "id": "Px2"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          15.5,
+          16.0
+        ]
+      },
+      "properties": {
+        "role": "spline-control-point",
+        "spline": "spline2"
+      },
+      "id": "Px3"
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.0,
+          20.0
+        ]
+      },
+      "properties": {
+        "role": "spline-control-point",
+        "spline": "spline2"
+      },
+      "id": "P2"
     },
     {
       "type": "Feature",

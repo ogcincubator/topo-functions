@@ -245,6 +245,44 @@ def test_process_densifies_circle_to_polygon():
     assert ring[0] == ring[-1]
 
 
+def test_arc_by_chord_radius_from_feature_property():
+    """ArcByChord radius may live on the feature (property) rather than on the
+    topology block itself (per the topo-arc schema)."""
+    data = _feature_collection({
+        "type": "Feature",
+        "id": "chord1",
+        "geometry": None,
+        "topology": {"type": "ArcByChord", "references": ["P1", "P2"],
+                     "orientation": "cw"},
+        "properties": {"radius": 105.438},  # radius only on the feature property
+    })
+    output = process(json.dumps(data), mode="edges,faces", densify=True, max_offset=0.02)
+    result = json.loads(output)
+    chord = [f for f in result["features"] if f.get("id") == "chord1"][0]
+    assert chord["geometry"]["type"] == "LineString"
+    assert len(chord["geometry"]["coordinates"]) >= 2
+
+
+def test_arc_topology_to_geometry_uses_feature_radius_fallback():
+    # No radius on the topology block -> falls back to feature_radius argument.
+    geom = arc_topology_to_geometry(
+        {"type": "ArcByChord", "orientation": "cw"}, [P1, P2],
+        max_offset=0.02, feature_radius=105.438,
+    )
+    assert geom is not None and geom["type"] == "LineString"
+    # Circle likewise.
+    geom = arc_topology_to_geometry(
+        {"type": "CircleByCenter"}, [PC], max_offset=0.02, feature_radius=10,
+    )
+    assert geom is not None and geom["type"] == "Polygon"
+
+
+def test_arc_by_chord_without_any_radius_returns_none():
+    assert arc_topology_to_geometry(
+        {"type": "ArcByChord", "orientation": "cw"}, [P1, P2], max_offset=0.02,
+    ) is None
+
+
 # ---------------------------------------------------------------------------
 # Run over the real topo-arc example files (skipped if the register isn't
 # checked out alongside this repo).
