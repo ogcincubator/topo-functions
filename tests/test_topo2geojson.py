@@ -628,6 +628,85 @@ def test_custom_object_polygon_ring_of_edges_is_not_over_nested():
     assert len(ring) == 4        # 3 distinct vertices + closing point
 
 
+def _two_triangles_plus_aggregate():
+    """Two Polygon parcels (sharing edge e1) and an AggregatePolygon that
+    references them by id — mirroring extended-example.json's BalanceParcel."""
+    return {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [
+            {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [10.0, 10.0]}},
+            {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [20.0, 20.0]}},
+            {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": [13.0, 17.0]}},
+            {"type": "Feature", "id": "P4", "geometry": {"type": "Point", "coordinates": [20.0, 10.0]}},
+        ],
+        "edges": [
+            {"type": "Feature", "id": "e1", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P1", "P2"]}},
+            {"type": "Feature", "id": "e2", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P2", "P3"]}},
+            {"type": "Feature", "id": "e3", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P3", "P1"]}},
+            {"type": "Feature", "id": "e4", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P1", "P4"]}},
+            {"type": "Feature", "id": "e5", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P4", "P2"]}},
+        ],
+        "parcels": [
+            {"type": "Feature", "id": "p1", "geometry": None,
+             "topology": {"type": "Polygon", "references": [["e1", "e2", "e3"]]},
+             "properties": {}},
+            {"type": "Feature", "id": "p2", "geometry": None,
+             "topology": {"type": "Polygon", "references": [["e1", "e5", "e4"]]},
+             "properties": {}},
+            {"type": "Feature", "id": "agg", "geometry": None,
+             "topology": {"type": "AggregatePolygon", "references": ["p1", "p2"]},
+             "properties": {}},
+        ],
+    }
+
+
+def test_aggregatepolygon_resolves_to_multipolygon():
+    """An AggregatePolygon aggregates the referenced Polygons (by id) into a
+    MultiPolygon; the coordinate nesting comes out correct, only the type
+    label differs from Polygon."""
+    data = _two_triangles_plus_aggregate()
+    output = process(json.dumps(data), mode="parcels", objects="parcels:Polygon", number=None)
+    parsed = json.loads(output)
+    agg = [f for f in parsed["features"] if f.get("id") == "agg"][0]
+    geom = agg["geometry"]
+    assert geom["type"] == "MultiPolygon"
+    assert len(geom["coordinates"]) == 2                 # two aggregated polygons
+    for polygon in geom["coordinates"]:                  # each polygon: list of rings
+        ring = polygon[0]
+        assert ring[0] == ring[-1]                       # closed
+        assert all(isinstance(pt, list) and len(pt) == 2 for pt in ring)
+
+
+def test_subtendedangle_topology_is_skipped():
+    """SubtendedAngle topology carries no renderable geometry and is skipped
+    (not rendered, no crash), while sibling edges still resolve."""
+    data = {
+        "type": "FeatureCollection",
+        "features": [],
+        "points": [
+            {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [0.0, 0.0]}},
+            {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [1.0, 1.0]}},
+        ],
+        "edges": [
+            {"type": "Feature", "id": "v1", "geometry": None,
+             "topology": {"type": "LineString", "references": ["P1", "P2"]}},
+            {"type": "Feature", "id": "ang1", "geometry": None,
+             "topology": {"type": "SubtendedAngle", "references": ["P1", "v1", "v1"]},
+             "properties": {}},
+        ],
+    }
+    parsed = json.loads(process(json.dumps(data), mode="edges", number=None))
+    ids = {f.get("id") for f in parsed.get("features", [parsed])}
+    assert "ang1" not in ids     # skipped
+    assert "v1" in ids           # sibling edge still rendered
+
+
 # ---------------------------------------------------------------------------
 # Edge orientation ("direction") auto-detection for Polygon `references`
 # ---------------------------------------------------------------------------

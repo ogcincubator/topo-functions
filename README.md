@@ -321,6 +321,12 @@ topo2geojson -i extended_example.json -m parcels -k parcels:Polygon -p
 
 `-m parcels` is required alongside `-k parcels:Polygon` — registering the key only makes it eligible for parsing; `-m` still controls which resolved feature types actually make it into the output. A `Polygon`-typed entry whose `topology.references` is a ring of edge IDs has those edges chained (and flipped as needed to match orientation) into a single flat ring, the same as the built-in `faces` key does — not left as a raw list of unflattened edge segments.
 
+A feature within such a collection whose `topology.type` is **`AggregatePolygon`** is emitted as a GeoJSON **`MultiPolygon`** regardless of the geometry type registered for the key: its `references` are the ids of the `Polygon` features to combine (which must resolve earlier in the same collection), and collecting their ring lists yields the correct MultiPolygon nesting. This matches CSDM `extended_example.json` parcels like `BalanceParcel`.
+
+#### Skipped topology types
+
+Some topology types describe non-spatial relations rather than renderable geometry and are silently skipped (never emitted, no warning): currently **`SubtendedAngle`** (an observed angle between two vectors, as in the CSDM survey examples).
+
 Examples:
 
 ```bash

@@ -35,6 +35,10 @@ DEFAULT_MAX_OFFSET = 0.02
 # points. Overridable via the "spline_alpha" metadata key or --spline-alpha.
 DEFAULT_SPLINE_ALPHA = 0.5
 
+# Topology types that carry no renderable geometry (non-spatial relations, e.g.
+# an observed angle between two vectors) and are skipped without warning.
+SKIP_TOPOLOGY_TYPES = {"subtendedangle"}
+
 
 # Module logger. Diagnostic/status output goes through this instead of print()
 # so it can be gated by the CLI's -v/--verbose flag (see _cli()). Without any
@@ -377,6 +381,12 @@ def _resolve_inline_topology(topo: dict, geomsmap: dict,
         if topo_type == "polygon":
             rings = _resolve_polygon_rings(refs, geomsmap, ttl_coords, ttl_geoms)
             return {"type": "Polygon", "coordinates": rings} if rings else None
+
+        elif topo_type == "aggregatepolygon":
+            # References are ids of already-resolved Polygons; collecting their
+            # ring lists yields correct MultiPolygon nesting.
+            polys = _resolve_refs(refs, geomsmap, ttl_coords)
+            return {"type": "MultiPolygon", "coordinates": polys} if polys else None
 
         elif topo_type in ("linestring", "edge"):
             pts = [c for r in refs if (c := lookup_coords(r)) is not None]
@@ -1048,9 +1058,12 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             if "topology" not in feat:
                 continue
             topo = feat["topology"]
-            expected = topo["type"].lower() + "s"
+            topo_type_l = (topo.get("type") or "").lower()
+            if topo_type_l in SKIP_TOPOLOGY_TYPES:
+                continue
+            expected = topo_type_l + "s"
             if expected != feat_type:
-                logger.warning("expected type %s does not match %s", topo["type"].lower(), feat_type)
+                logger.warning("expected type %s does not match %s", topo_type_l, feat_type)
             # An arc/circle/spline edge is densified/fitted into its true curved
             # coordinates here (and stored in geomsmap below), so that rings and
             # polygons chaining this edge pick up the curve rather than a chord.
@@ -1099,8 +1112,13 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 logger.warning("No references found")
                 continue
 
+            # An AggregatePolygon aggregates several already-resolved Polygons
+            # (referenced by id) into a MultiPolygon; its references resolve to
+            # the correct MultiPolygon nesting, only the type label differs.
+            geom_type_name = "MultiPolygon" if topo_type_l == "aggregatepolygon" \
+                else geomtype[feat_type]
             feat["geometry"] = {
-                "type": geomtype[feat_type],
+                "type": geom_type_name,
                 "coordinates": coords,
                 "properties": feat.get("properties", {}),
             }
@@ -1139,6 +1157,8 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         # arc/circle described by the topology's point references, rather than
         # the straight-line (chord) approximation the default path produces.
         topo_type_lc = (topo.get("type") or "").lower()
+        if topo_type_lc in SKIP_TOPOLOGY_TYPES:
+            continue
         if densify and topo_type_lc in ARC_TOPOLOGY_TYPES:
             # Densify in native units and reproject where possible (see
             # _topology_curve_geometry); ArcByChord/CircleByCenter radius may
