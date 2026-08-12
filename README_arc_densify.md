@@ -185,6 +185,13 @@ Two small bridge modules connect the topology descriptions to the interpolators:
   interpolated in 3-D (Z carried through the output vertices), otherwise the
   output stays 2-D.
 
+  The knot spacing uses **centripetal** parameterization by default
+  (Catmull-Rom α = 0.5), which — unlike uniform parameterization — avoids the
+  overshoot/kink artefacts that occur where control points are unevenly spaced.
+  Tune it with `spline_alpha` / `--spline-alpha` (`0` uniform, `0.5`
+  centripetal, `1` chordal); see the *Spline fitting algorithm* section of
+  [`README.md`](README.md).
+
   Spline fitting is **unconditional**: whenever a `CubicSpline` topology is
   encountered it is rendered as the fitted curve, in both the Points-n-Edges
   and Densified-Curves transforms (and regardless of the `--densify` flag) — a

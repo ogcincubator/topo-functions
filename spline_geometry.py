@@ -112,11 +112,20 @@ def _flatten(spline, t0: float, t1: float, max_offset: float,
     _flatten(spline, t_mid, t1, max_offset, out, depth + 1)
 
 
+# Centripetal parameterization (Catmull-Rom alpha). Uniform parameterization
+# (alpha=0) of an interpolating cubic spline through unevenly-spaced points
+# overshoots badly near closely-spaced points — producing sharp kinks/cusps.
+# Centripetal (alpha=0.5) is the standard choice that avoids cusps and
+# self-intersections (Yuksel et al. 2011).
+DEFAULT_ALPHA = 0.5
+
+
 def densify_spline(
     vertices: list[Coord],
     max_offset: float,
     start_tangent: Coord | None = None,
     end_tangent: Coord | None = None,
+    alpha: float | None = DEFAULT_ALPHA,
 ) -> list[Point]:
     """
     Interpolate a cubic spline through `vertices` and return its densified
@@ -133,6 +142,10 @@ def densify_spline(
         Optional tangent direction vectors at the first and last vertex. When
         both are supplied the spline is clamped to those directions; otherwise
         natural (zero second-derivative) end conditions are used.
+    alpha:
+        Parameterization exponent (0 = uniform, 0.5 = centripetal, 1 = chordal).
+        Defaults to centripetal, which prevents the overshoot/kink artefacts a
+        uniform parameterization produces through unevenly-spaced points.
 
     Returns
     -------
@@ -161,7 +174,9 @@ def densify_spline(
     else:
         endconditions = "natural"
 
-    spline = Natural(vertices_3d, endconditions=endconditions)
+    # alpha needs >= 2 distinct points; with exactly 2 it degenerates to a line,
+    # so uniform is fine there.
+    spline = Natural(vertices_3d, endconditions=endconditions, alpha=alpha)
     grid = spline.grid
 
     # Flatten in 3-D, then project each vertex down to the output dimensionality.

@@ -140,9 +140,53 @@ referenced point to the second.
 |-----------|-----------------|--------------------|----------|---------|
 | Densify arcs/circles | `densify=True` | `densify: true` | `-d`, `--densify` | Render `Arc`/`Circle` types as true curves rather than chords (splines are always fitted regardless) |
 | Curve tolerance | `max_offset=0.02` | `max_offset: 0.02` | `--max-offset 0.02` | Maximum chord-to-curve offset (sagitta), in input coordinate units, for densified arcs and fitted splines. Smaller → more vertices. Default `0.02` |
+| Spline parameterization | `spline_alpha=0.5` | `spline_alpha: 0.5` | `--spline-alpha 0.5` | Catmull-Rom α for `CubicSpline` fitting: `0` uniform, `0.5` centripetal (default), `1` chordal. See below. |
+
+#### Spline fitting algorithm
+
+`CubicSpline` topology is interpolated with the [`splines`](https://pypi.org/project/splines/)
+package as a **natural cubic spline** that passes through every control point.
+Two aspects are tunable:
+
+- **`max_offset` (tolerance).** The fitted curve is continuous; it is sampled
+  into output vertices by *adaptive subdivision* — a segment is split until the
+  curve's deviation from the chord drops below `max_offset` (the same sagitta
+  tolerance used for arcs). Smaller values give more vertices / a smoother
+  polyline. Because the tolerance is in coordinate units, splines (like arcs)
+  are fitted in the input's **native CRS** and reprojected, so `max_offset`
+  stays meaningful even when output is WGS84 degrees.
+
+- **`spline_alpha` (parameterization).** The knot spacing used along the curve,
+  as the Catmull-Rom α exponent applied to the distances between control points:
+
+  | α | Name | Behaviour |
+  |---|------|-----------|
+  | `0` | uniform | Ignores point spacing. **Overshoots / kinks** badly when points are unevenly spaced. |
+  | `0.5` | **centripetal** (default) | Guaranteed no cusps or self-intersections; follows the control polygon closely. Recommended. |
+  | `1` | chordal | Even smoother through very uneven spacing, but can bulge away from the control polygon. |
+
+  Real survey boundaries mix long and very short segments; uniform
+  parameterization produces sharp artefacts at the closely-spaced points, so
+  the default is **centripetal**. Use `--spline-alpha 1` for a smoother
+  (chordal) curve, or `0` to reproduce uniform behaviour.
+
+- **Tangents.** When the topology supplies `startTangentVector` /
+  `endTangentVector`, the spline is *clamped* so its start/end directions match
+  those vectors; otherwise natural (zero-second-derivative) end conditions are
+  used.
 
 Both 2-D and 3-D control points are supported; a spline whose points carry a
 Z value is interpolated in 3-D (Z carried through to the output vertices).
+
+**Curves as edges of rings/polygons, and native-CRS fitting.** Arc/circle/spline
+topology is generated wherever it appears — not only on standalone features but
+also on features in the `edges`/`rings`/`faces` collections (or a custom `-k`
+collection). When such a curve is an *edge* of a ring or `Polygon`, the fitted
+curve (not a straight chord through its points) is what gets chained into the
+ring. Because `max_offset` is expressed in the source coordinate units, curves
+are densified in their **native CRS** (captured before the up-front reprojection
+to WGS84) and the fitted result is reprojected — so the tolerance stays
+meaningful even when the output is in lon/lat degrees.
 
 ```python
 from topo2geojson import process
@@ -197,6 +241,7 @@ output = process(fh, mode="faces", number=None,
   - `"ttl"` — a TTL path, a glob pattern, or a list of either, providing topology for features referenced but not defined inline
   - `"densify"` — `true` to render `Arc`/`ArcWithCenter`/`ArcByChord`/`CircleByCenter` topology as true curves rather than chord approximations (`CubicSpline` is always fitted regardless); default `false`. See [Arc, circle and spline topology](#arc-circle-and-spline-topology-curved-geometry)
   - `"max_offset"` — maximum chord-to-curve offset (sagitta) for densified arcs and fitted splines, in input coordinate units; default `0.02`
+  - `"spline_alpha"` — `CubicSpline` parameterization exponent (`0` uniform, `0.5` centripetal, `1` chordal); default `0.5`. See [Spline fitting algorithm](#spline-fitting-algorithm)
   - `"namespaces"`/`"prefixes"` — optional `{prefix: namespace_uri}` fallback map for [namespace/prefix resolution](#namespaceprefix-resolution), used below the input JSON's own `@context` and any examples.yaml prefixes the host exposes via `transform_metadata.context`
 
 Call `run_transform()` to get the GeoJSON string to bind to `output_data`. Both arguments are optional — if omitted, they're picked up from `input_data`/`transform_metadata` globals (e.g. a host that `exec`s the whole module, or one that sets them as module attributes after importing it):
@@ -247,7 +292,7 @@ transforms:
 ### CLI
 
 ```bash
-topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-k KEY:TYPE ...] [-n NUMBER] [-d] [--max-offset F] [-p]
+topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [-k KEY:TYPE ...] [-n NUMBER] [-d] [--max-offset F] [--spline-alpha A] [-p]
 ```
 
 | Option | Description |
@@ -260,6 +305,7 @@ topo2geojson -i <input.json> [-t <model.ttl> ...] [-o <output.json>] [-m MODE] [
 | `-n`, `--number` | Max number of features to include |
 | `-d`, `--densify` | Render `Arc`/`ArcWithCenter`/`ArcByChord`/`CircleByCenter` topology as true curved geometry instead of a straight-chord approximation (`CubicSpline` is always fitted). See [Arc, circle and spline topology](#arc-circle-and-spline-topology-curved-geometry) |
 | `--max-offset` | Maximum chord-to-curve offset (sagitta) for `--densify` and spline fitting, in input coordinate units (default `0.02`) |
+| `--spline-alpha` | `CubicSpline` parameterization: `0` uniform, `0.5` centripetal (default), `1` chordal. See [Spline fitting algorithm](#spline-fitting-algorithm) |
 | `-p`, `--print` | Print output to stdout |
 | `-ns`, `--namespace` | `PREFIX=URI` (or a bare `URI`) [namespace/prefix declaration](#namespaceprefix-resolution) for resolving references (repeatable; the last-resort fallback below the input JSON's own `@context` and examples.yaml prefixes) |
 

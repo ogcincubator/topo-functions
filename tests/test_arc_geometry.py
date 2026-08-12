@@ -283,6 +283,35 @@ def test_arc_by_chord_without_any_radius_returns_none():
     ) is None
 
 
+def test_arc_with_center_tolerates_survey_radius_noise():
+    """Real ArcWithCenter survey data rarely has start/end exactly equidistant
+    from the supplied centre (mimicking the extended-example arc 152, whose
+    radii were 248.0445 vs 248.0452). Such sub-mm noise must not be rejected."""
+    centre = (0.0, 0.0)
+    start = (248.0445, 0.0)                                  # radius 248.0445
+    ang = math.radians(15.0)
+    end = (248.0452 * math.cos(ang), 248.0452 * math.sin(ang))  # radius 248.0452
+    geom = arc_topology_to_geometry(
+        {"type": "ArcWithCenter", "orientation": "ccw"}, [start, end, centre],
+        max_offset=0.02,
+    )
+    assert geom is not None
+    assert geom["type"] == "LineString"
+    assert len(geom["coordinates"]) > 2  # actually densified
+
+
+def test_arc_with_center_still_rejects_gross_radius_mismatch():
+    """A point grossly off the circle (wrong reference) is still rejected."""
+    centre = (0.0, 0.0)
+    start = (248.0, 0.0)
+    end = (300.0, 0.0)  # ~52 m off — clearly not the same circle
+    with pytest.raises(ValueError, match="same circle"):
+        arc_topology_to_geometry(
+            {"type": "ArcWithCenter", "orientation": "ccw"}, [start, end, centre],
+            max_offset=0.02,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Run over the real topo-arc example files (skipped if the register isn't
 # checked out alongside this repo).

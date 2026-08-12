@@ -29,6 +29,12 @@ from topo_rdf_geojson import load_topo, load_topo_components
 # the "max_offset" metadata key or the CLI --max-offset flag.
 DEFAULT_MAX_OFFSET = 0.02
 
+# Default CubicSpline parameterization (Catmull-Rom alpha): 0 = uniform,
+# 0.5 = centripetal, 1 = chordal. Centripetal avoids the overshoot/kink
+# artefacts uniform parameterization produces through unevenly-spaced control
+# points. Overridable via the "spline_alpha" metadata key or --spline-alpha.
+DEFAULT_SPLINE_ALPHA = 0.5
+
 
 # Module logger. Diagnostic/status output goes through this instead of print()
 # so it can be gated by the CLI's -v/--verbose flag (see _cli()). Without any
@@ -706,16 +712,18 @@ _GEOM_TO_MODE = {
 }
 
 
-def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset):
+def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset,
+                             alpha=DEFAULT_SPLINE_ALPHA):
     """
     Interpolate a CubicSpline topology into a densified LineString geometry.
 
-    Uses the `splines` package (via spline_geometry) to fit a natural cubic
-    spline through the resolved control points, clamped to the start/end
-    tangent directions when the topology supplies startTangentVector/
-    endTangentVector. Falls back to a straight polyline through the control
-    points if `splines` is not installed or interpolation fails, so the
-    transform still yields a reviewable geometry.
+    Uses the `splines` package (via spline_geometry) to fit a cubic spline
+    through the resolved control points, clamped to the start/end tangent
+    directions when the topology supplies startTangentVector/endTangentVector.
+    `alpha` is the parameterization exponent (0 uniform, 0.5 centripetal,
+    1 chordal). Falls back to a straight polyline through the control points if
+    `splines` is not installed or interpolation fails, so the transform still
+    yields a reviewable geometry.
     """
     straight = {"type": "LineString", "coordinates": [list(p) for p in spline_pts]}
 
@@ -736,7 +744,8 @@ def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset)
             _resolve_refs(end_vec.get("references", []), geomsmap, ttl_coords))
 
     try:
-        points = densify_spline(spline_pts, max_offset, start_tangent, end_tangent)
+        points = densify_spline(spline_pts, max_offset, start_tangent, end_tangent,
+                                alpha=alpha)
     except Exception as exc:  # noqa: BLE001 - degrade gracefully for any spline failure
         logger.warning("could not interpolate spline (%s); using straight polyline", exc)
         return straight
@@ -757,7 +766,116 @@ _TANGENT_STYLE = {
 }
 
 
-def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset, mode):
+def _snapshot_native_points(data):
+    """
+    Snapshot every point feature's coordinates in their *native* CRS (from a
+    JSON-FG `place`, else `geometry`) plus a transformer to WGS84, captured
+    before the document is reprojected.
+
+    Arc/spline densification tolerances (`max_offset`) are expressed in the
+    source coordinate units (e.g. metres), but topology resolution runs after
+    the document has been reprojected to WGS84 degrees — where that tolerance
+    is meaningless. Fitting curves from this native snapshot and reprojecting
+    the result keeps the tolerance correct.
+
+    Returns (native_coords, transformer). `transformer` is None when the root
+    CRS is absent/already-WGS84/unparseable, in which case callers simply fit
+    in the coordinates they already have.
+    """
+    root_crs = data.get("coordRefSys") or data.get("horizontalCRS")
+    transformer = _get_wgs84_transformer(root_crs, {})
+    native: dict = {}
+    if transformer is None:
+        return native, None
+
+    def collect(node):
+        if isinstance(node, dict):
+            if node.get("type") == "Feature" and "id" in node:
+                place = node.get("place")
+                src = place if isinstance(place, dict) and place.get("coordinates") is not None \
+                    else node.get("geometry")
+                if isinstance(src, dict) and src.get("type") == "Point" \
+                        and src.get("coordinates") is not None:
+                    native[node["id"]] = src["coordinates"]
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    collect(v)
+        elif isinstance(node, list):
+            for v in node:
+                collect(v)
+
+    collect(data)
+    return native, transformer
+
+
+def _all_point_refs(topo):
+    """Flat list of every point id a curve topology references (its control
+    points plus any start/end tangent-vector references)."""
+    refs = [r for r in topo.get("references", []) if not isinstance(r, list)]
+    for key in ("startTangentVector", "endTangentVector"):
+        vec = topo.get(key)
+        if isinstance(vec, dict):
+            refs.extend(r for r in vec.get("references", []) if not isinstance(r, list))
+    return refs
+
+
+def _topology_curve_geometry(topo, feature, geomsmap, ttl_coords, densify, max_offset,
+                             native_coords=None, transformer=None,
+                             spline_alpha=DEFAULT_SPLINE_ALPHA):
+    """
+    Build the curved GeoJSON geometry for an Arc/Circle/CubicSpline topology,
+    or return None if `topo` is not a curve type that should be generated here.
+
+    CubicSplines are always fitted; Arc/ArcWithCenter/ArcByChord/CircleByCenter
+    are densified only when `densify` is set. When a native-CRS snapshot covers
+    every referenced point the curve is fitted in native units (so `max_offset`
+    is meaningful) and the result reprojected to WGS84; otherwise it is fitted
+    directly in the already-resolved coordinates.
+
+    Returns a geometry dict (LineString for arcs/splines, Polygon for a circle)
+    in WGS84, or None.
+    """
+    topo_type = (topo.get("type") or "").lower()
+    is_spline = topo_type == "cubicspline"
+    is_arc = topo_type in ARC_TOPOLOGY_TYPES
+    if not is_spline and not (densify and is_arc):
+        return None
+
+    # Fit in the native CRS when the snapshot covers every referenced point.
+    cmap, cttl, reproject = geomsmap, ttl_coords, False
+    if native_coords is not None and transformer is not None \
+            and all(native_coords.get(r) is not None for r in _all_point_refs(topo)):
+        cmap, cttl, reproject = native_coords, {}, True
+
+    if is_spline:
+        pts = [p for p in _resolve_refs(topo.get("references", []), cmap, cttl) if p is not None]
+        if len(pts) < 2:
+            return None
+        geom = _densify_spline_topology(topo, pts, cmap, cttl, max_offset, spline_alpha)
+    else:
+        coords = _resolve_refs(topo.get("references", []), cmap, cttl)
+        feature_radius = None
+        if feature:
+            feature_radius = feature.get("radius")
+            if feature_radius is None:
+                feature_radius = (feature.get("properties") or {}).get("radius")
+        try:
+            geom = arc_topology_to_geometry(topo, coords, max_offset,
+                                            feature_radius=feature_radius)
+        except ValueError as exc:
+            logger.warning("could not densify arc %r: %s", (feature or {}).get("id"), exc)
+            return None
+
+    if geom is None:
+        return None
+    if reproject:
+        geom = {**geom, "coordinates": _reproject_coords(geom["coordinates"], transformer)}
+    return geom
+
+
+def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset, mode,
+                                 native_coords=None, transformer=None,
+                                 spline_alpha=DEFAULT_SPLINE_ALPHA):
     """
     Build the output GeoJSON features for a CubicSpline topology:
 
@@ -767,21 +885,41 @@ def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset
       startTangentVector/endTangentVector) as separately-styled dashed
       LineStrings (when `edges` in mode).
     """
-    feat_id = feature.get("id")
-    refs = topo.get("references", [])
-    resolved = _resolve_refs(refs, geomsmap, ttl_coords)
-    spline_pts = [p for p in resolved if p is not None]
+    spline_pts = [p for p in _resolve_refs(topo.get("references", []), geomsmap, ttl_coords)
+                  if p is not None]
 
     features: list[dict] = []
 
-    # Fitted spline curve.
+    # Fitted spline curve (fitted in native units and reprojected when possible).
     if "edges" in mode and len(spline_pts) >= 2:
-        geom = _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset)
+        geom = _topology_curve_geometry(topo, feature, geomsmap, ttl_coords, True,
+                                        max_offset, native_coords, transformer,
+                                        spline_alpha)
         if geom is not None:
             features.append({**feature, "geometry": geom})
 
-    # Original control points.
+    # Original control points + start/end tangent segments.
+    features.extend(_spline_extra_features(feature, topo, geomsmap, ttl_coords, mode))
+    return features
+
+
+def _spline_extra_features(feature, topo, geomsmap, ttl_coords, mode):
+    """
+    Build the supplementary features for a CubicSpline (everything except the
+    fitted curve itself): its original control points as Point features (when
+    `points` in mode), and its start/end tangent segments as separately-styled
+    dashed LineStrings (when `edges` in mode).
+
+    Shared by the standalone-feature path and the collection-level (edge) path,
+    so a spline that is an edge of a ring still shows its tangents/control
+    points.
+    """
+    feat_id = feature.get("id")
+    refs = topo.get("references", [])
+    features: list[dict] = []
+
     if "points" in mode:
+        resolved = _resolve_refs(refs, geomsmap, ttl_coords)
         for ref, coord in zip(refs, resolved):
             if coord is None:
                 continue
@@ -792,7 +930,6 @@ def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset
                 "properties": {"role": "spline-control-point", "spline": feat_id},
             })
 
-    # Start/end tangent segments, drawn with a distinct dashed style.
     if "edges" in mode:
         for position, key in (("start", "startTangentVector"),
                               ("end", "endTangentVector")):
@@ -816,7 +953,8 @@ def _spline_topology_to_features(feature, topo, geomsmap, ttl_coords, max_offset
 
 def process(input_data, mode="points,edges,faces", objects=None , number=None, ttl_geoms=None, ttl_coords=None,
             ttl_components=None, namespaces=None, transform_metadata=None,
-            densify=False, max_offset=DEFAULT_MAX_OFFSET) -> str:
+            densify=False, max_offset=DEFAULT_MAX_OFFSET,
+            spline_alpha=DEFAULT_SPLINE_ALPHA) -> str:
     if ttl_geoms is None:
         ttl_geoms = {}
     if ttl_coords is None:
@@ -834,6 +972,11 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         ttl_geoms = _NamespaceResolvingMap(ttl_geoms, resolved_namespaces)
         ttl_coords = _NamespaceResolvingMap(ttl_coords, resolved_namespaces)
         ttl_components = _NamespaceResolvingMap(ttl_components, resolved_namespaces)
+
+    # Snapshot point coordinates in their native CRS *before* reprojection, so
+    # arc/spline curves can be densified in native units (where max_offset is
+    # meaningful) and the fitted curve reprojected afterwards.
+    native_point_coords, curve_transformer = _snapshot_native_points(data)
 
     # Resolve place/geometry CRS(es) and reproject to EPSG:4326 up front —
     # topology resolution below chains raw point coordinates together, which
@@ -908,7 +1051,17 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             expected = topo["type"].lower() + "s"
             if expected != feat_type:
                 logger.warning("expected type %s does not match %s", topo["type"].lower(), feat_type)
-            if "references" in topo:
+            # An arc/circle/spline edge is densified/fitted into its true curved
+            # coordinates here (and stored in geomsmap below), so that rings and
+            # polygons chaining this edge pick up the curve rather than a chord.
+            curve_geom = _topology_curve_geometry(topo, feat, geomsmap, ttl_coords,
+                                                  densify, max_offset,
+                                                  native_point_coords, curve_transformer,
+                                                  spline_alpha)
+            if curve_geom is not None:
+                coords = curve_geom["coordinates"][0] \
+                    if curve_geom["type"] == "Polygon" else curve_geom["coordinates"]
+            elif "references" in topo:
                 if topo["type"].lower() == "polygon":
                     # A Polygon's references are rings of edge IDs, whose
                     # segments need chaining into flat ring point lists (see
@@ -959,6 +1112,20 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
                 count += 1
                 data["features"].append(feat)
 
+            # A CubicSpline edge also contributes its control points and
+            # start/end tangent segments (same as a standalone spline feature),
+            # de-duplicated against points already emitted.
+            if (topo.get("type") or "").lower() == "cubicspline":
+                existing_ids = {f.get("id") for f in data["features"] if f.get("id")}
+                for extra in _spline_extra_features(feat, topo, geomsmap, ttl_coords, mode):
+                    if (extra.get("properties") or {}).get("role") == "spline-control-point" \
+                            and extra.get("id") in existing_ids:
+                        continue
+                    if number and count >= int(number):
+                        break
+                    count += 1
+                    data["features"].append(extra)
+
     # Process individual features with inline topology, resolved via TTL
     for feature in all_input_features:
         topo = feature.get("topology")
@@ -973,18 +1140,13 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         # the straight-line (chord) approximation the default path produces.
         topo_type_lc = (topo.get("type") or "").lower()
         if densify and topo_type_lc in ARC_TOPOLOGY_TYPES:
-            arc_coords = _resolve_refs(topo.get("references", []), geomsmap, ttl_coords)
-            # ArcByChord/CircleByCenter radius may be a feature-level property
-            # (topo-arc schema) rather than on the topology block itself.
-            feature_radius = feature.get("radius")
-            if feature_radius is None:
-                feature_radius = (feature.get("properties") or {}).get("radius")
-            try:
-                arc_geom = arc_topology_to_geometry(topo, arc_coords, max_offset,
-                                                    feature_radius=feature_radius)
-            except ValueError as exc:
-                logger.warning("could not densify arc feature %r: %s", feat_id, exc)
-                arc_geom = None
+            # Densify in native units and reproject where possible (see
+            # _topology_curve_geometry); ArcByChord/CircleByCenter radius may
+            # be a feature-level property rather than on the topology block.
+            arc_geom = _topology_curve_geometry(topo, feature, geomsmap, ttl_coords,
+                                                densify, max_offset,
+                                                native_point_coords, curve_transformer,
+                                                spline_alpha)
             if arc_geom is not None:
                 feat_mode = _GEOM_TO_MODE.get(arc_geom["type"].lower(), "edges")
                 if feat_mode in mode and not (number and count >= int(number)):
@@ -1001,7 +1163,9 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             # tangent vectors are drawn as separately-styled dashed segments.
             existing_ids = {f.get("id") for f in data["features"] if f.get("id")}
             for sf in _spline_topology_to_features(feature, topo, geomsmap,
-                                                   ttl_coords, max_offset, mode):
+                                                   ttl_coords, max_offset, mode,
+                                                   native_point_coords, curve_transformer,
+                                                   spline_alpha):
                 # Don't re-emit a control point already output as an inline point.
                 if (sf.get("properties") or {}).get("role") == "spline-control-point" \
                         and sf.get("id") in existing_ids:
@@ -1158,6 +1322,7 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     # Opt-in densification of arc/circle topology into true curved geometry.
     densify = bool(transform_metadata.metadata.get("densify", False))
     max_offset = float(transform_metadata.metadata.get("max_offset", DEFAULT_MAX_OFFSET))
+    spline_alpha = float(transform_metadata.metadata.get("spline_alpha", DEFAULT_SPLINE_ALPHA))
 
     ttl_geoms_tm: dict = {}
     ttl_coords_tm: dict = {}
@@ -1177,7 +1342,8 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
 
     logger.info("running in transformer mode")
     return process(input_data, mode, objects, None, ttl_geoms_tm, ttl_coords_tm, ttl_components_tm,
-                    transform_metadata=transform_metadata, densify=densify, max_offset=max_offset)
+                    transform_metadata=transform_metadata, densify=densify, max_offset=max_offset,
+                    spline_alpha=spline_alpha)
 
 
 # Guard on `transform_metadata`'s presence so that a plain `import
@@ -1231,11 +1397,18 @@ def _cli():
     argparser.add_argument("-d", "--densify", action="store_true",
                            help="Densify Arc/ArcWithCenter/ArcByChord/CircleByCenter "
                                 "topology into true curved geometry via arc_densify "
-                                "(instead of a straight-chord approximation)")
+                                "(instead of a straight-chord approximation). CubicSpline "
+                                "topology is always fitted regardless of this flag")
     argparser.add_argument("--max-offset", type=float, default=DEFAULT_MAX_OFFSET,
                            dest="max_offset",
-                           help=f"Maximum chord-to-arc offset (sagitta) for --densify, "
-                                f"in input coordinate units (default: {DEFAULT_MAX_OFFSET})")
+                           help=f"Maximum chord-to-arc offset (sagitta) for --densify "
+                                f"and spline fitting, in input coordinate units "
+                                f"(default: {DEFAULT_MAX_OFFSET})")
+    argparser.add_argument("--spline-alpha", type=float, default=DEFAULT_SPLINE_ALPHA,
+                           dest="spline_alpha",
+                           help=f"CubicSpline parameterization: 0=uniform, 0.5=centripetal, "
+                                f"1=chordal (default: {DEFAULT_SPLINE_ALPHA}). Centripetal "
+                                f"avoids kinks through unevenly-spaced points")
     argparser.add_argument("-ns", "--namespace", action="append", default=[],
                            metavar="PREFIX=URI",
                            help="Namespace/prefix declaration(s) to try (in addition to any "
@@ -1269,7 +1442,8 @@ def _cli():
         with open(f) as fh:
             output = process(fh, args.mode, args.objects, args.number, ttl_geoms_map, ttl_coords_map,
                               ttl_components_map, namespaces=args.namespace,
-                              densify=args.densify, max_offset=args.max_offset)
+                              densify=args.densify, max_offset=args.max_offset,
+                              spline_alpha=args.spline_alpha)
         if args.print:
             print(output)
         if args.output_file:

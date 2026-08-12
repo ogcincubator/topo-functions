@@ -42,13 +42,19 @@ ARC_TOPOLOGY_TYPES = frozenset(
     {"arc", "arcwithcenter", "arcbychord", "circlebycenter"}
 )
 
-# A generous radius tolerance for the internally-derived centres: the centres
-# are computed to lie exactly on the supplied points, so the only differences
-# are floating-point rounding. densify_arc()'s default 5mm tolerance assumes
-# metre survey coordinates and would spuriously reject small demo coordinates,
-# so we relax it relative to the arc's own radius.
+# Absolute tolerance for the start/end radius-agreement check in densify_arc.
+#
+# For a 3-point Arc or an ArcByChord the centre is derived so both endpoints
+# lie on the circle to within floating-point rounding. But for an ArcWithCenter
+# the centre is supplied by the data, and real survey points are rarely exactly
+# equidistant from it — they differ by measurement/rounding noise (sub-mm to a
+# few cm on radii of hundreds of metres). A fixed tiny tolerance spuriously
+# rejects such arcs (e.g. start=248.0445 vs end=248.0452), so scale it to the
+# radius (0.1%) with an absolute floor. The arc's endpoints are emitted exactly
+# as supplied regardless, so this leniency only affects the radius used for the
+# interpolated vertices, while still catching gross errors (wrong point ref).
 def _radius_tolerance(radius: float) -> float:
-    return max(1e-6, radius * 1e-6)
+    return max(0.005, abs(radius) * 1e-3)
 
 
 Coord = Sequence[float]

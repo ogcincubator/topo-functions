@@ -334,3 +334,167 @@ def test_spline_tangent_segments_absent_when_no_tangents():
     tangents = [f for f in result["features"]
                 if (f.get("properties") or {}).get("role") == "spline-tangent"]
     assert tangents == []
+
+
+# ---------------------------------------------------------------------------
+# Spline as an *edge* in a collection, and consumed by a Polygon ring.
+# ---------------------------------------------------------------------------
+
+def _point_collection(coords_by_id, *, place=False):
+    """A topo-feature `points` collection of inline point features."""
+    feats = []
+    for pid, coord in coords_by_id.items():
+        f = {"type": "Feature", "id": pid, "geometry": None}
+        if place:
+            f["place"] = {"type": "Point", "coordinates": list(coord)}
+        else:
+            f["geometry"] = {"type": "Point", "coordinates": list(coord)}
+        feats.append(f)
+    return {"type": "FeatureCollection", "features": feats}
+
+
+# A spline arc A->B->C->D closed back to A by a straight edge D->A.
+_RING_POINTS = {"A": [0.0, 0.0], "B": [10.0, 20.0], "C": [20.0, 20.0], "D": [30.0, 0.0]}
+
+
+def _spline_edge_ring_doc(points, **root):
+    return {
+        "type": "FeatureCollection",
+        **root,
+        "points": [_point_collection(points, place=bool(root))],
+        "edges": [{
+            "type": "FeatureCollection", "featureType": "Edge",
+            "features": [
+                {"id": "spedge", "type": "Feature", "geometry": None,
+                 "topology": {"type": "CubicSpline",
+                              "references": ["A", "B", "C", "D"]}},
+                {"id": "closing", "type": "Feature", "geometry": None,
+                 "topology": {"type": "LineString", "references": ["D", "A"]}},
+            ],
+        }],
+        "parcels": [{
+            "type": "FeatureCollection", "featureType": "Parcel",
+            "features": [{
+                "id": "parcel1", "type": "Feature", "geometry": None,
+                "topology": {"type": "Polygon",
+                             "references": [["spedge", "closing"]]},
+            }],
+        }],
+    }
+
+
+def test_spline_edge_in_collection_is_fitted_not_chord():
+    """A CubicSpline living in the `edges` collection is fitted into a
+    densified curve, not chained straight through its control points."""
+    doc = _spline_edge_ring_doc(_RING_POINTS)
+    result = json.loads(process(json.dumps(doc), mode="edges", max_offset=0.02))
+    spedge = [f for f in result["features"] if f.get("id") == "spedge"][0]
+    coords = spedge["geometry"]["coordinates"]
+    assert spedge["geometry"]["type"] == "LineString"
+    # Far more than the 4 control points -> genuinely densified.
+    assert len(coords) > 4
+    assert coords[0] == _RING_POINTS["A"]
+    assert coords[-1] == _RING_POINTS["D"]
+
+
+def test_polygon_ring_picks_up_fitted_spline_edge():
+    """A Polygon whose ring includes a spline edge chains the *fitted* curve,
+    so the ring has many more vertices than a chord-only ring would."""
+    doc = _spline_edge_ring_doc(_RING_POINTS)
+    result = json.loads(process(json.dumps(doc), mode="parcels",
+                                objects="parcels:Polygon", max_offset=0.02))
+    parcel = [f for f in result["features"] if f.get("id") == "parcel1"][0]
+    ring = parcel["geometry"]["coordinates"][0]
+    # Chord-only ring would be ~5 points (A,B,C,D + close); the fitted spline
+    # contributes many intermediate vertices.
+    assert len(ring) > 6
+    assert ring[0] == ring[-1]  # closed
+
+
+def _max_turn_deg(coords):
+    """Largest turn angle (degrees) between consecutive segments of a polyline."""
+    worst = 0.0
+    for i in range(1, len(coords) - 1):
+        a, b, c = coords[i - 1], coords[i], coords[i + 1]
+        v1 = (b[0] - a[0], b[1] - a[1])
+        v2 = (c[0] - b[0], c[1] - b[1])
+        n1 = math.hypot(*v1)
+        n2 = math.hypot(*v2)
+        if n1 < 1e-12 or n2 < 1e-12:
+            continue
+        cs = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+        worst = max(worst, math.degrees(math.acos(cs)))
+    return worst
+
+
+# Unevenly-spaced control points: some pairs very close, some far apart — the
+# configuration that makes uniform parameterization overshoot.
+_UNEVEN = [(0, 0), (10, 8), (10.4, 8.3), (20, 20), (30, 21), (30.3, 21.1), (40, 10)]
+
+
+def test_centripetal_default_avoids_uniform_overshoot():
+    uniform = densify_spline(_UNEVEN, max_offset=0.02, alpha=0.0)
+    centripetal = densify_spline(_UNEVEN, max_offset=0.02)  # default alpha=0.5
+    # The default parameterization produces a markedly smoother curve.
+    assert _max_turn_deg(centripetal) < _max_turn_deg(uniform)
+
+
+def test_densify_spline_alpha_changes_the_curve():
+    a0 = densify_spline(_UNEVEN, max_offset=0.02, alpha=0.0)
+    a1 = densify_spline(_UNEVEN, max_offset=0.02, alpha=1.0)
+    assert a0 != a1
+
+
+def test_spline_edge_emits_tangent_segments_and_is_fitted():
+    """A spline that is an edge in a collection still emits its start/end
+    tangent segments (dashed) and control points, not just the fitted curve."""
+    pts = {"A": [0.0, 0.0], "B": [10.0, 20.0], "C": [20.0, 20.0], "D": [30.0, 0.0],
+           "T0": [-1.0, -2.0], "T1": [31.0, -2.0]}
+    doc = {
+        "type": "FeatureCollection",
+        "points": [_point_collection(pts)],
+        "edges": [{
+            "type": "FeatureCollection", "featureType": "Edge",
+            "features": [{
+                "id": "spedge", "type": "Feature", "geometry": None,
+                "topology": {
+                    "type": "CubicSpline",
+                    "references": ["A", "B", "C", "D"],
+                    "startTangentVector": {"references": ["T0", "A"]},
+                    "endTangentVector": {"references": ["D", "T1"]},
+                },
+            }],
+        }],
+    }
+    result = json.loads(process(json.dumps(doc), mode="edges,points", max_offset=0.05))
+    tangents = [f for f in result["features"]
+                if (f.get("properties") or {}).get("role") == "spline-tangent"]
+    assert {t["properties"]["position"] for t in tangents} == {"start", "end"}
+    assert all(t["properties"]["stroke"] and t["properties"]["stroke-dasharray"]
+               for t in tangents)
+    # The control points appear as Point features (here via the inline points
+    # collection; a spline referencing TTL-only points would emit them with the
+    # spline-control-point role instead — see the TTL test above).
+    point_ids = {f.get("id") for f in result["features"]
+                 if (f.get("geometry") or {}).get("type") == "Point"}
+    assert {"A", "B", "C", "D"} <= point_ids
+    spedge = [f for f in result["features"] if f.get("id") == "spedge"][0]
+    assert len(spedge["geometry"]["coordinates"]) > 4  # fitted, densified
+
+
+def test_spline_edge_densified_in_native_crs_then_reprojected():
+    """With a projected CRS the spline is fitted in native units (where
+    max_offset is meaningful) and reprojected: output is in lon/lat and still
+    densified beyond the control points."""
+    # Points around Perth, WA in a metric UTM-like CRS.
+    metric_points = {
+        "A": [400000.0, 6460000.0], "B": [400010.0, 6460020.0],
+        "C": [400020.0, 6460020.0], "D": [400030.0, 6460000.0],
+    }
+    doc = _spline_edge_ring_doc(metric_points, horizontalCRS="epsg:32750")
+    result = json.loads(process(json.dumps(doc), mode="edges", max_offset=0.05))
+    spedge = [f for f in result["features"] if f.get("id") == "spedge"][0]
+    coords = spedge["geometry"]["coordinates"]
+    assert len(coords) > 4  # densified in metres despite output being degrees
+    # Reprojected to WGS84: longitudes ~115E, latitudes ~-32.
+    assert all(110 < x < 120 and -34 < y < -30 for x, y in coords)
