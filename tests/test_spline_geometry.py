@@ -12,7 +12,7 @@ import math
 import pytest
 from conftest import JSON_OUTPUT_DIR
 
-from spline_geometry import (
+from geometry.spline_geometry import (
     densify_spline,
     tangent_from_references,
 )

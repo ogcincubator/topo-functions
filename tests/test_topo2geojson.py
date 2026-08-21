@@ -8,9 +8,11 @@ so it can only be resolved by loading topoobjects.ttl.
 """
 import json
 import os
+import tempfile
 import types
 
 import pytest
+import rdflib
 from conftest import JSON_OUTPUT_DIR, TESTS_DIR
 from topo2geojson import (
     _chain_edges,
@@ -955,3 +957,200 @@ def test_edge_spanning_two_different_source_crs_points_chains_correctly():
     assert a_lat == pytest.approx(EPSG_7850_WGS84[1], abs=1e-9)
     assert b_lon == pytest.approx(EPSG_3857_WGS84[0], abs=1e-6)
     assert b_lat == pytest.approx(EPSG_3857_WGS84[1], abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Failure-case regression tests, each derived from an existing happy-path
+# fixture/test above. process()/load_topo() are deliberately defensive
+# (warn-and-skip) for most malformed topology rather than raising -- these
+# lock in that graceful-degradation contract; only genuinely-intended raises
+# (a malformed TTL file, an unresolvable "ttl" transform path) are asserted
+# as exceptions.
+# ---------------------------------------------------------------------------
+
+def test_edge_referencing_unknown_point_is_skipped_not_a_crash():
+    """From test_cube_with_void_points_and_edges: an Edge referencing a point
+    id that doesn't exist anywhere (no TTL, no matching inline point) must be
+    skipped with a warning rather than raising."""
+    feature = {
+        "type": "Feature", "id": "e-missing-ref", "geometry": None,
+        "topology": {"type": "Edge", "references": ["P1", "P_MISSING"]},
+        "properties": {},
+    }
+    points = [{"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [1.0, 1.0]}}]
+    data = {"type": "FeatureCollection", "features": [feature], "points": points}
+
+    output = process(json.dumps(data), mode="edges", number=None)
+    parsed = json.loads(output)
+    assert parsed == {"warning": "no feature geometries generated"}
+
+
+def _ttl_without_feature(local_name: str) -> str:
+    """Return tests/topoobjects.ttl with every triple mentioning *local_name*
+    removed, written to a temp file. Caller is responsible for deleting it."""
+    g = rdflib.Graph()
+    g.parse(str(TTL_FILE), format="turtle")
+    for triple in [t for t in g if local_name in str(t[0]) or local_name in str(t[2])]:
+        g.remove(triple)
+
+    fd, path = tempfile.mkstemp(suffix=".ttl")
+    os.close(fd)
+    g.serialize(destination=path, format="turtle")
+    return path
+
+
+def test_parcel1_ring_degrades_gracefully_when_ttl_is_missing_an_interior_edge():
+    """From test_parcel1_resolved_via_ttl: a TTL missing one of parcel1's six
+    referenced edges entirely (not just malformed) must still produce a
+    best-effort ring rather than raising -- _chain_edges's documented
+    best-effort contract. The gap shows up as a dropped vertex (5 unique
+    points instead of the intact ring's 6), not a crash."""
+    path = _ttl_without_feature("l985190")
+    try:
+        ttl_geoms, ttl_coords, ttl_components = load_ttl_geoms([path])
+        with PARCEL_FILE.open() as fh:
+            output = process(fh, mode="faces", number=None,
+                              ttl_geoms=ttl_geoms, ttl_coords=ttl_coords, ttl_components=ttl_components)
+        ring = json.loads(output)["geometry"]["coordinates"][0]
+        assert len({tuple(p) for p in ring}) == 5   # intact ring has 6 unique points
+    finally:
+        os.unlink(path)
+
+
+def test_load_ttl_geoms_raises_a_clear_parse_error_for_malformed_turtle():
+    """Companion to test_parcel1_without_ttl_cannot_be_resolved: when a TTL
+    *is* supplied but isn't valid Turtle (or JSON-LD -- load_graph tries
+    both), the parse error should surface clearly rather than silently
+    producing an empty result."""
+    fd, path = tempfile.mkstemp(suffix=".ttl")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("this is not valid turtle at all {{{")
+        with pytest.raises(Exception):
+            load_ttl_geoms([path])
+    finally:
+        os.unlink(path)
+
+
+def test_multilinestring_drops_the_unresolvable_line_but_keeps_the_other():
+    """From test_multilinestring_topology_resolves_to_multilinestring_geometry:
+    one of the two point-id sublists references an unknown point -- that line
+    is dropped from the output, the resolvable one still renders."""
+    feature = {
+        "type": "Feature", "id": "MultiLineWithGap", "geometry": None,
+        "topology": {"type": "MultiLineString", "references": [["P1", "P2"], ["P2", "P_MISSING"]]},
+        "properties": None,
+    }
+    points = [
+        {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [10.0, 10.0]}},
+        {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [20.0, 20.0]}},
+    ]
+    data = {"type": "FeatureCollection", "features": [feature], "points": points}
+
+    output = process(json.dumps(data), mode="rings", number=None)
+    parsed = json.loads(output)
+    feature_out = parsed["features"][0] if parsed.get("type") == "FeatureCollection" else parsed
+    assert feature_out["geometry"] == {
+        "type": "MultiLineString",
+        "coordinates": [[[10.0, 10.0], [20.0, 20.0]]],
+    }
+
+
+def test_aggregatepolygon_skips_an_unknown_referenced_polygon():
+    """From test_aggregatepolygon_resolves_to_multipolygon: an
+    AggregatePolygon referencing a polygon id that was never defined
+    contributes nothing for that id rather than raising KeyError."""
+    data = {
+        "type": "FeatureCollection", "features": [],
+        "points": [
+            {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": [10.0, 10.0]}},
+            {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": [20.0, 20.0]}},
+            {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": [13.0, 17.0]}},
+        ],
+        "edges": [
+            {"type": "Feature", "id": "e1", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P1", "P2"]}},
+            {"type": "Feature", "id": "e2", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P2", "P3"]}},
+            {"type": "Feature", "id": "e3", "geometry": None,
+             "topology": {"type": "Edge", "references": ["P3", "P1"]}},
+        ],
+        "parcels": [
+            {"type": "Feature", "id": "p1", "geometry": None,
+             "topology": {"type": "Polygon", "references": [["e1", "e2", "e3"]]}, "properties": {}},
+            {"type": "Feature", "id": "agg", "geometry": None,
+             "topology": {"type": "AggregatePolygon", "references": ["p1", "p_missing"]}, "properties": {}},
+        ],
+    }
+
+    output = process(json.dumps(data), mode="parcels", objects="parcels:Polygon", number=None)
+    parsed = json.loads(output)
+    agg = [f for f in parsed["features"] if f.get("id") == "agg"][0]
+    assert agg["geometry"]["type"] == "MultiPolygon"
+    assert len(agg["geometry"]["coordinates"]) == 1   # only p1 contributed; p_missing skipped
+
+
+def test_unparseable_crs_leaves_coordinates_unprojected_with_a_warning():
+    """From test_reprojects_non_wgs84_input_via_pyproj: a crs value pyproj
+    can't parse must fall back to leaving coordinates untouched (with a
+    logged warning) rather than raising."""
+    feature = {
+        "type": "Feature", "id": "bad-crs-point",
+        "crs": {"type": "name", "properties": {"name": "NOT-A-REAL-CRS-9999"}},
+        "geometry": {"type": "Point", "coordinates": [123.456, 78.9, 1.0]},
+        "properties": {},
+    }
+    output = process(json.dumps(feature), mode="points", number=None)
+    data = json.loads(output)
+    assert data["geometry"]["coordinates"] == [123.456, 78.9, 1.0]   # unprojected passthrough
+
+
+def test_run_transform_raises_for_a_ttl_path_unresolvable_via_cwd_or_context_dirs(tmp_path, monkeypatch):
+    """Companion to test_run_transform_resolves_relative_ttl_via_context_working_dir:
+    when a "ttl" metadata path resolves via neither cwd nor
+    context.working_dir/bblock_files_path, run_transform surfaces a clear
+    FileNotFoundError for the literal unresolved pattern rather than
+    silently proceeding as if no TTL had been configured -- a missing TTL a
+    transform explicitly asked for should fail loudly, not go quiet."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    transform_metadata = types.SimpleNamespace(
+        metadata={"mode": "faces", "ttl": ["_sources/examples/does-not-exist.ttl"]},
+        context=types.SimpleNamespace(working_dir=str(elsewhere)),
+    )
+
+    with PARCEL_FILE.open() as fh:
+        with pytest.raises(FileNotFoundError):
+            run_transform(fh.read(), transform_metadata)
+
+
+def test_polygon_ring_with_a_duplicate_edge_id_does_not_crash():
+    """From test_polygon_references_ring_resolves_correctly_when_first_edge_is_backwards:
+    the same edge id listed twice in a ring's references must still chain to
+    *some* deterministic (if degenerate) ring rather than raising --
+    topo2geojson does no topology validation itself (that's topo_validator's
+    job); TR-22-style repetition is a validator concern, not a transformer
+    crash."""
+    feature = {
+        "type": "Feature", "id": "triangle-dup-edge", "geometry": None,
+        "topology": {"type": "Polygon", "references": [["e1", "e2", "e3", "e1"]]},
+        "properties": None,
+    }
+    points = [
+        {"type": "Feature", "id": "P1", "geometry": {"type": "Point", "coordinates": P1}},
+        {"type": "Feature", "id": "P2", "geometry": {"type": "Point", "coordinates": P2}},
+        {"type": "Feature", "id": "P3", "geometry": {"type": "Point", "coordinates": P3}},
+    ]
+    edges = [
+        {"type": "Feature", "id": "e1", "geometry": None, "topology": {"type": "Edge", "references": ["P1", "P2"]}},
+        {"type": "Feature", "id": "e2", "geometry": None, "topology": {"type": "Edge", "references": ["P2", "P3"]}},
+        {"type": "Feature", "id": "e3", "geometry": None, "topology": {"type": "Edge", "references": ["P3", "P1"]}},
+    ]
+    data = {"type": "FeatureCollection", "features": [feature], "points": points, "edges": edges}
+
+    output = process(json.dumps(data), mode="faces", number=None)
+    parsed = json.loads(output)   # must not raise
+    feature_out = parsed["features"][0] if parsed.get("type") == "FeatureCollection" else parsed
+    assert feature_out["geometry"]["type"] == "Polygon"

@@ -30,7 +30,7 @@ from __future__ import annotations
 import math
 from typing import Any, Sequence
 
-from arc_densify import (
+from .arc_densify import (
     ArcDirection,
     densify_arc,
     max_chord_angle,

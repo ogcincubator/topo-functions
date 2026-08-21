@@ -13,7 +13,7 @@ import math
 import pytest
 from conftest import JSON_OUTPUT_DIR, TESTS_DIR
 
-from arc_geometry import (
+from geometry.arc_geometry import (
     arc_topology_to_geometry,
     chord_centre,
     circumcentre,

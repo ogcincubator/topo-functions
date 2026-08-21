@@ -21,7 +21,7 @@ from typing import Generator, List
 
 from pyproj import Transformer
 
-from arc_geometry import ARC_TOPOLOGY_TYPES, arc_topology_to_geometry
+from geometry.arc_geometry import ARC_TOPOLOGY_TYPES, arc_topology_to_geometry
 from topo_rdf_geojson import load_topo, load_topo_components
 
 # Default maximum chord-to-arc offset (sagitta) used when densifying arc/circle
@@ -738,7 +738,7 @@ def _densify_spline_topology(topo, spline_pts, geomsmap, ttl_coords, max_offset,
     straight = {"type": "LineString", "coordinates": [list(p) for p in spline_pts]}
 
     try:
-        from spline_geometry import densify_spline, tangent_from_references
+        from geometry.spline_geometry import densify_spline, tangent_from_references
     except ImportError:
         logger.warning("`splines` package not installed; falling back to a "
                        "straight polyline for CubicSpline topology")

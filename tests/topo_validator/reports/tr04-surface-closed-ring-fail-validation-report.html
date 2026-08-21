@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Topology Validation Report</title>
+  <style>
+
+:root {
+  --ok: #157347;
+  --warn: #b58100;
+  --fail: #b02a37;
+  --border: #d0d7de;
+  --muted: #57606a;
+  --bg: #f6f8fa;
+  --text: #24292f;
+}
+
+body {
+  margin: 0;
+  padding: 2rem;
+  color: var(--text);
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+h1, h2 {
+  margin-bottom: 0.75rem;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}
+
+.card {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--bg);
+}
+
+.card-label {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.card-value {
+  margin-top: 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 2rem;
+}
+
+th, td {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--bg);
+}
+
+.group-row th {
+  background: #eaeef2;
+  font-size: 1rem;
+}
+
+.status,
+.severity {
+  display: inline-block;
+  min-width: 4.5rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.pass {
+  background: var(--ok);
+}
+
+.warn,
+.warning {
+  background: var(--warn);
+}
+
+.fail,
+.error {
+  background: var(--fail);
+}
+
+.empty-state {
+  color: var(--muted);
+  font-style: italic;
+}
+
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Topology Validation Report</h1>
+    <p class="source-file">Test file: <strong>tr04-surface-closed-ring-fail.json</strong></p>
+
+    <section class="summary">
+      <div class="card">
+        <div class="card-label">Validation</div>
+        <div class="card-value">Failed</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Valid</div>
+        <div class="card-value">False</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Issues</div>
+        <div class="card-value">5</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Errors</div>
+        <div class="card-value">5</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Rule results</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Rule</th>
+            <th>Name</th>
+            <th>Issues</th>
+            <th>Errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="group-row"><th colspan="5">Structure</th></tr><tr><td><span class="status pass">PASS</span></td><td>Structure</td><td>Required collections, ids, and field types</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Point Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-01</td><td>UniquePoints</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-11</td><td>PointFabricConsistency</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Curve Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-02</td><td>CurveNoSelfIntersection</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-03</td><td>NoDanglingCurves</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-12</td><td>MinimumCurveLength</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-13</td><td>NoDuplicateCurves</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-14</td><td>CurveIntersectionAtNodesOnly</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-22</td><td>NoRepeatedCurveInRing</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Surface Rules</th></tr><tr><td><span class="status fail">FAIL</span></td><td>TR-04</td><td>SurfaceClosedRing</td><td>3</td><td>3</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-05</td><td>SharedSurfaceEdges</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-15</td><td>NoSurfaceSelfIntersection</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-16</td><td>NoDuplicateSurfaces</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-17</td><td>SurfaceCurveConsistency</td><td>0</td><td>0</td></tr><tr><td><span class="status fail">FAIL</span></td><td>TR-23</td><td>ConnectedInterior</td><td>2</td><td>2</td></tr><tr class="group-row"><th colspan="5">Shell / Face Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-06</td><td>ClosedSolid</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-18</td><td>NoDanglingFaces</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Solid Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-07</td><td>PositiveVolume</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-19</td><td>MinimumSolidThickness</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-24</td><td>SolidNonSelfIntersection</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-25</td><td>ShellOrientation</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Solid Relationship Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-08</td><td>NoSolidOverlap</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-10</td><td>SharedSolidFace</td><td>0</td><td>0</td></tr><tr class="group-row"><th colspan="5">Containment Rules</th></tr><tr><td><span class="status pass">PASS</span></td><td>TR-09</td><td>ParentContainment</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-20</td><td>EasementContainment</td><td>0</td><td>0</td></tr><tr><td><span class="status pass">PASS</span></td><td>TR-21</td><td>ThematicHostRelationship</td><td>0</td><td>0</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    
+        <section>
+          <h2>Issue details</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Code</th>
+                <th>Target</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="severity error">ERROR</span></td><td>SURFACE_RING_NOT_CLOSED</td><td>uuid:da2e85b6-5670-4759-a076-00a9225c7ca8</td><td>Surface uuid:da2e85b6-5670-4759-a076-00a9225c7ca8 ring 0: member 3 ends at &#x27;uuid:89fbbae7-a5a3-4539-acfe-cf6bd02115db&#x27; but member 0 starts at &#x27;uuid:5ea43aac-1f62-4d89-9750-429a522242f7&#x27;</td></tr>
+<tr><td><span class="severity error">ERROR</span></td><td>SURFACE_RING_NOT_CLOSED</td><td>uuid:4d1ae25a-0d3b-48f2-8169-b4c2451e95b3</td><td>Surface uuid:4d1ae25a-0d3b-48f2-8169-b4c2451e95b3 ring 0: member 0 ends at &#x27;uuid:5ea43aac-1f62-4d89-9750-429a522242f7&#x27; but member 1 starts at &#x27;uuid:89fbbae7-a5a3-4539-acfe-cf6bd02115db&#x27;</td></tr>
+<tr><td><span class="severity error">ERROR</span></td><td>SURFACE_RING_NOT_CLOSED</td><td>uuid:4588ddd8-9939-44f0-8b20-cfd4b2c4afcf</td><td>Surface uuid:4588ddd8-9939-44f0-8b20-cfd4b2c4afcf ring 0: member 3 ends at &#x27;uuid:89fbbae7-a5a3-4539-acfe-cf6bd02115db&#x27; but member 0 starts at &#x27;uuid:5ea43aac-1f62-4d89-9750-429a522242f7&#x27;</td></tr>
+<tr><td><span class="severity error">ERROR</span></td><td>SURFACE_RING_REPEATED_VERTEX</td><td>uuid:da2e85b6-5670-4759-a076-00a9225c7ca8</td><td>Surface uuid:da2e85b6-5670-4759-a076-00a9225c7ca8 ring 0: vertex &#x27;uuid:5ea43aac-1f62-4d89-9750-429a522242f7&#x27; is the start-point of members 0 and 3; the ring visits this vertex twice, creating a pinch point that disconnects the surface interior</td></tr>
+<tr><td><span class="severity error">ERROR</span></td><td>SURFACE_RING_REPEATED_VERTEX</td><td>uuid:4d1ae25a-0d3b-48f2-8169-b4c2451e95b3</td><td>Surface uuid:4d1ae25a-0d3b-48f2-8169-b4c2451e95b3 ring 0: vertex &#x27;uuid:89fbbae7-a5a3-4539-acfe-cf6bd02115db&#x27; is the start-point of members 0 and 1; the ring visits this vertex twice, creating a pinch point that disconnects the surface interior</td></tr>
+            </tbody>
+          </table>
+        </section>
+        
+  </main>
+</body>
+</html>

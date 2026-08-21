@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topo-rdf-geojson"
-version = "0.8.0"
-description = "Convert RDF Turtle topology models (geojson-topo vocabulary) to GeoJSON geometry objects, and convert topo-feature JSON to GeoJSON"
+version = "0.9.0"
+description = "Convert RDF (Turtle/JSON-LD) topology models (geojson-topo vocabulary) to GeoJSON geometry objects, convert topo-feature JSON to GeoJSON, and validate Topo Feature / 3D CSDM topology consistency"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "rdflib>=6.0",
     "pyproj>=3.5",
@@ -30,15 +30,18 @@ test = [
 [project.scripts]
 topo-rdf-geojson = "topo_rdf_geojson:_cli"
 topo2geojson = "topo2geojson:_cli"
+topo-validate = "topo_validator.cli:main"
 
 [tool.setuptools]
 py-modules = [
     "topo_rdf_geojson",
+    "topo_rdf_common",
     "topo2geojson",
-    "arc_densify",
-    "arc_geometry",
-    "arc_to_geojson_writer",
-    "spline_geometry",
+]
+packages = [
+    "geometry",
+    "topo_validator",
+    "topo_validator.conformance",
 ]
 
 [tool.pytest.ini_options]

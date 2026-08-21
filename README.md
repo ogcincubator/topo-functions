@@ -1,9 +1,12 @@
 # topo-rdf-geojson
 
-Two modules for converting topology-based feature models to GeoJSON:
+Modules for converting and validating topology-based feature models:
 
-- **`topo_rdf_geojson`** — reads an RDF Turtle topology model (geojson-topo vocabulary) and returns a dict of GeoJSON geometry objects for every feature, indexed by both full URI string and qname (`prefix:local`).
-- **`topo2geojson`** — converts topo-feature JSON (points/edges/rings/faces/shells/solids, inline or referenced) into GeoJSON. Some inputs are fully self-contained; others only carry bare topology references to features that live in a separate RDF Turtle model, in which case `topo2geojson` resolves them via `topo_rdf_geojson.load_topo()`. It also renders the non-linear [topo-arc](#arc-circle-and-spline-topology-curved-geometry) topology types (`Arc`, `ArcWithCenter`, `ArcByChord`, `CircleByCenter`, `CubicSpline`) as true curved geometry.
+- **`topo_rdf_geojson`** — reads an RDF topology model (Turtle or JSON-LD, geojson-topo vocabulary) and returns a dict of GeoJSON geometry objects for every feature, indexed by both full URI string and qname (`prefix:local`).
+- **`topo2geojson`** — converts topo-feature JSON (points/edges/rings/faces/shells/solids, inline or referenced) into GeoJSON. Some inputs are fully self-contained; others only carry bare topology references to features that live in a separate RDF model, in which case `topo2geojson` resolves them via `topo_rdf_geojson.load_topo()`. It also renders the non-linear [topo-arc](#arc-circle-and-spline-topology-curved-geometry) topology types (`Arc`, `ArcWithCenter`, `ArcByChord`, `CircleByCenter`, `CubicSpline`) as true curved geometry.
+- **[`topo_validator`](#topo_validator)** — validates Topo Feature / 3D CSDM topology data (points, curves, surfaces, shells, solids, and their relationships) for structural and topological consistency, either standalone (CLI/Python API) or wired into an OGC Building Blocks register as a [validator plugin](#use-as-an-ogc-building-blocks-validator-plugin) or a [transform](#use-as-an-ogc-building-blocks-transform-1) that produces a validation report. Like `topo2geojson`, it can resolve topology objects defined externally in an RDF graph ([Turtle or JSON-LD](#rdf-graph-input-ttl--json-ld)) rather than requiring everything inline.
+
+Curve/arc geometry helpers (`arc_geometry`, `arc_densify`, `spline_geometry`) live under the `geometry` package (e.g. `from geometry.arc_geometry import ...`) — internal to `topo2geojson`, not part of the modules above's own public surface.
 
 ## Installation
 
@@ -13,6 +16,8 @@ pip install topo-rdf-geojson
 # topo2geojson also needs pyproj (for CRS reprojection); install the extra to get it:
 pip install topo-rdf-geojson[geojson]
 ```
+
+Installing the package provides three console scripts: `topo-rdf-geojson`, `topo2geojson`, and `topo-validate`.
 
 ## `topo_rdf_geojson`
 
@@ -59,6 +64,8 @@ topo-rdf-geojson <source.ttl> [--key URI_OR_QNAME] [--keys-only] [--indent N]
 
 Multiple `geojson:topology` triples on the same feature are merged: all LineStrings → MultiLineString, all Polygons → MultiPolygon, mixed → GeometryCollection.
 
+`load_topo()`/`load_topo_components()` accept Turtle **or** JSON-LD (`.ttl`/`.jsonld` by extension, or content-sniffed when there's no filename to go on — see `topo_rdf_common.load_graph`); no extra dependency is needed, rdflib's built-in `json-ld` parser handles it. Qname-form keys (`eg2:8446454`) only appear when the source declares the matching namespace prefix — a Turtle file's `@prefix` declarations always do, but a JSON-LD document only does if it carries its own `@context` with that prefix mapping (a bare `graph.serialize(format="json-ld")` with no `context=` argument doesn't); full-URI keys always work regardless.
+
 ## `topo2geojson`
 
 ### Usage
@@ -86,8 +93,8 @@ Beyond the straight-line topology types, `topo2geojson` renders the non-linear
 `topo-arc` building-block topology types — which describe curves by *reference*
 to point features rather than by storing vertices — as true curved GeoJSON. The geometry each type leaves implicit
 (a circle centre, a sweep direction, a spline's shape) is computed by two
-companion modules, `arc_geometry` (via [`arc_densify`](README_arc_densify.md))
-and `spline_geometry` (via the [`splines`](https://pypi.org/project/splines/)
+companion modules, `geometry.arc_geometry` (via [`geometry.arc_densify`](README_arc_densify.md))
+and `geometry.spline_geometry` (via the [`splines`](https://pypi.org/project/splines/)
 package); see [`README_arc_densify.md`](README_arc_densify.md) for the geometry
 details.
 
@@ -343,6 +350,102 @@ topo2geojson -i extended_example.json -m parcels -k parcels:Polygon -p
 topo2geojson -i arc_by_center.json -t referenced-objects.ttl -m edges,faces --densify --max-offset 0.02 -p
 ```
 
+## `topo_validator`
+
+`topo_validator` validates Topo Feature / 3D CSDM topology data against a set of boundary-block topology rules — checking whether points, curves, surfaces, shells, solids, and solid relationships form a coherent 3D topological model. It runs structural checks first (required collections/fields present and well-formed), then topology conformance checks grouped into conformance classes; if structural errors are found, topology rules aren't run.
+
+| Conformance class | Name                          | Rules                                                |
+|--------------------|--------------------------------|-------------------------------------------------------|
+| `CC-01`            | Point topology                | `TR-01`, `TR-11`                                     |
+| `CC-02`            | Curve topology                | `TR-02`, `TR-03`, `TR-12`, `TR-13`, `TR-14`, `TR-22` |
+| `CC-03`            | Surface topology              | `TR-04`, `TR-05`, `TR-15`, `TR-16`, `TR-17`, `TR-23` |
+| `CC-04`            | Shell topology                 | `TR-06`, `TR-18`                                     |
+| `CC-05`            | Solid topology                 | `TR-07`, `TR-19`, `TR-24`, `TR-25`                   |
+| `CC-06`            | Solid relationship topology    | `TR-08`, `TR-10`                                     |
+| `CC-07`            | Containment and host topology  | `TR-09`, `TR-20`, `TR-21`                            |
+
+Full per-rule descriptions, issue codes, and tolerances are in [`topo_validator/topology_rules.md`](topo_validator/topology_rules.md).
+
+**2D data.** The conformance classes above assume 3D coordinates. A dataset whose points are all valid 2D `[x, y]` pairs (no z) is **not** treated as a structural failure — it produces a single `NO_3D_TOPOLOGY` warning ("no 3D topology found; 2D validation is not yet implemented") and the 3D conformance classes are skipped, rather than every point being flagged `INVALID_COORDINATES`. `valid`/the CLI exit code stay `0` (a warning, not an error) in this case. A points collection that's *inconsistently* dimensioned (some 2D, some 3D, or otherwise malformed) is still a real structural error, not treated as "this is a 2D dataset." Dedicated 2D/2.5D topology rules are a possible future extension (see `topo_validator/topology_rules.md`'s "Limitations" notes on 2D/2.5D parcel fabric coverage).
+
+### CLI
+
+```bash
+topo-validate path/to/model.json --format text   # text | json | html, default text
+```
+
+By default the CLI reads a Topo Feature / 3D CSDM JSON file, converts it, validates all conformance classes, and exits `0` (no errors), `1` (validation errors found), or `2` (input/CLI failure) — suitable for CI. `--raw-internal` accepts data already in the internal `points`/`curves`/`surfaces`/`solids` shape instead of CSDM JSON. `--ttl` (repeatable, supports glob) merges in topology resolved from an external RDF graph — see [RDF-graph input](#rdf-graph-input-ttl--json-ld) below.
+
+### Python API
+
+```python
+from topo_validator import from_csdm_json, load_json, validate_topology, errors_only
+
+raw = load_json("path/to/model.json")
+topology = from_csdm_json(raw)
+issues = validate_topology(topology)
+errors = errors_only(issues)
+if errors:
+    print(f"Validation failed with {len(errors)} error(s)")
+    for issue in errors:
+        print(issue["code"], issue["object_id"], issue["message"])
+```
+
+Each issue is `{"code", "severity", "message", "object_id", "path", "extra"}`. `topo_validator.report` builds `to_text_report()`/`to_json_report()`/`to_html_report()` from a list of issues.
+
+### RDF-graph input (TTL / JSON-LD)
+
+Like `topo_rdf_geojson`, `topo_validator` can resolve topology objects defined externally in an RDF graph (Turtle or JSON-LD) instead of requiring everything inline — the same schema-agnostic-by-reference approach, applied to the validator's internal structural model rather than to resolved geometry:
+
+```python
+from topo_validator import from_csdm_json, load_json, from_rdf_graph, merge_topology, validate_topology
+
+topology = merge_topology(
+    from_rdf_graph("referenced-objects.ttl"),   # or a .jsonld source — format is auto-detected
+    from_csdm_json(load_json("model.json")),
+)
+issues = validate_topology(topology)
+```
+
+`from_rdf_graph()` (in `topo_validator.rdf_loader`) walks the geojson-topo vocabulary *structurally* — curve vertex ids, ring/surface membership, and shell/solid structure — rather than resolving to coordinates, since topology-consistency rules (duplicate curves, shared-edge orientation, point-fabric consistency, …) operate on that id graph, not on geometry. `merge_topology()` (in `topo_validator.merge`) unions multiple `TopologyData` sources by id, so RDF-referenced and inline-CSDM objects are both visible to one `validate_topology()` call; a later source's id wins on conflict.
+
+Domain properties outside the core topology vocabulary (a solid's volume/theme/parcel_type/parent_id/levels, observation-curve exemptions) aren't part of `topo_rdf_geojson`'s RDF walk either, so RDF-sourced solids get default values — rules that only depend on the topology graph itself are fully supported; rules needing those domain properties need them supplied separately (typically via `merge_topology` with a CSDM-JSON source, as above).
+
+### Use as an OGC Building Blocks validator plugin
+
+`topo_validator.plugin.TopoValidatorPlugin` implements the duck-typed [OGC Building Blocks validator-plugin interface](https://ogcincubator.github.io/bblocks-docs/create/validation#validator-plugins) — `mime_types`/`file_extensions` class attributes plus `validate(self, meta) -> list[dict] | None`, returning `{"message", "is_error", "payload"}` entries. This is a different mechanism from a `type: python` *transform* (below): a validator plugin is applied by a register's own test-resource validation across every matching file, receives a file path rather than raw input data, and gates pass/fail rather than producing a report document.
+
+It's registered in a *consuming* register's `bblocks-config.yaml` (not in this repo):
+
+```yaml
+plugins:
+  validators:
+    - pip: git+https://github.com/ogcincubator/topo-functions.git
+      modules:
+        - topo_validator
+```
+
+If a bblock declares its companion RDF file as a `role: validation` resource in `bblock.json`, `TopoValidatorPlugin` resolves it via `from_rdf_graph()` and merges it into the topology being validated before running the rules — the RDF-graph-input mechanism above, applied automatically.
+
+### Use as an OGC Building Blocks transform
+
+`topo_validator.transform` mirrors [`topo2geojson`'s transform convention](#use-as-an-ogc-building-blocks-transform) — `run_transform(input_data, transform_metadata)` and plugin classes (`TopoValidatorTransform` for JSON, `TopoValidatorHtmlTransform` for HTML) — for producing a standalone validation *report* as build output, rather than gating a register's own test-resource validation:
+
+```yaml
+transforms:
+  - id: Validate-Topology
+    type: python
+    metadata:
+      dependencies:
+        pip: [git+https://github.com/ogcincubator/topo-functions.git]
+      output_format: json   # or "html" / "text"
+      fail_on_error: true   # raise instead of just returning the report
+      ttl: referenced-objects.ttl   # optional; same resolution as topo2geojson's "ttl"
+    code: |
+      from topo_validator.transform import run_transform
+      output_data = run_transform()
+```
+
 ## Tests
 
 ```bash
@@ -350,11 +453,11 @@ pip install topo-rdf-geojson[test]
 pytest
 ```
 
-Tests persist the GeoJSON they generate under `tests/output/`, split by submodule (`tests/output/topo_rdf_geojson/`, `tests/output/topo2geojson/`) so outputs can be inspected afterward.
+Tests persist the GeoJSON they generate under `tests/output/`, split by submodule (`tests/output/topo_rdf_geojson/`, `tests/output/topo2geojson/`) so outputs can be inspected afterward. `topo_validator`'s tests live under `tests/topo_validator/` (fixtures, HTML report snapshots, and its own `conftest.py` in-memory sample builders).
 
 ## Dependencies
 
-- [rdflib](https://rdflib.readthedocs.io/) >= 6.0 (both modules) — MIT/BSD
+- [rdflib](https://rdflib.readthedocs.io/) >= 6.0 (all modules; JSON-LD parsing is built in, no extra dependency) — MIT/BSD
 - [pyproj](https://pyproj4.github.io/pyproj/) >= 3.5 (`topo2geojson`, for CRS reprojection) — MIT
 - [splines](https://pypi.org/project/splines/) >= 0.3 (`topo2geojson`, for `CubicSpline` fitting) — MIT
 - [numpy](https://numpy.org/) >= 1.21 (required by `splines`) — BSD-3-Clause

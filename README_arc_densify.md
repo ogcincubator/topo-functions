@@ -91,7 +91,7 @@ points = densify_arc(
 ### Getting Arc Statistics
 
 ```python 
-from arc_densify import chord_statistics
+from geometry.arc_densify import chord_statistics
 
 stats = chord_statistics(
     start=start,

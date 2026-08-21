@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from arc_densify import densify_arc, ArcDirection, Point
+from .arc_densify import densify_arc, ArcDirection, Point
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"

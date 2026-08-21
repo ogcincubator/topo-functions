@@ -1,7 +1,7 @@
 """
 topo_rdf_geojson.py
 ===================
-Reads an RDF Turtle topology model (geojson-topo vocabulary) and returns a
+Reads an RDF topology model (Turtle or JSON-LD, geojson-topo vocabulary) and returns a
 dict of GeoJSON geometry objects for every feature, indexed by both full URI
 string and qname (prefix:local).
 
@@ -61,13 +61,10 @@ import rdflib
 from rdflib import RDF, BNode, Graph, Literal, Namespace, URIRef
 from rdflib.collection import Collection
 
-# ---------------------------------------------------------------------------
-# Namespace constants
-# ---------------------------------------------------------------------------
-
-GEOJSON = Namespace("https://purl.org/geojson/vocab#")
-TOPO = Namespace("https://purl.org/geojson/topo#")
-DCT = Namespace("http://purl.org/dc/terms/")
+from topo_rdf_common import DCT, GEOJSON, GEOJSON_TYPE_MAP, TOPO, RdfTopologyWalker
+from topo_rdf_common import feature_uris as _shared_feature_uris
+from topo_rdf_common import load_graph as _shared_load_graph
+from topo_rdf_common import qname_fn as _shared_qname_fn
 
 _TOPO_EDGE = TOPO.Edge
 _TOPO_RING = TOPO.Ring
@@ -80,81 +77,25 @@ _GJ_LINESTRING = GEOJSON.LineString
 _GJ_POLYGON    = GEOJSON.Polygon
 
 # Map geojson type URIs → GeoJSON type strings (for direct geometry parsing)
-_GEOJSON_TYPE_MAP = {
-    GEOJSON.Point:           "Point",
-    GEOJSON.LineString:      "LineString",
-    GEOJSON.Polygon:         "Polygon",
-    GEOJSON.MultiPoint:      "MultiPoint",
-    GEOJSON.MultiLineString: "MultiLineString",
-    GEOJSON.MultiPolygon:    "MultiPolygon",
-}
+_GEOJSON_TYPE_MAP = GEOJSON_TYPE_MAP
 
 # ---------------------------------------------------------------------------
 # Internal resolver
 # ---------------------------------------------------------------------------
 
-class _TopoResolver:
-    """Stateful resolver that walks the topology graph and caches results."""
+class _TopoResolver(RdfTopologyWalker):
+    """Stateful resolver that walks the topology graph and caches results.
+
+    RDF-list/directed-reference walking (`_items`, `_is_list_head`,
+    `_related_features`, `_ref_to_uri`, `_directed_refs`) comes from
+    `RdfTopologyWalker` (shared with `topo_validator.rdf_loader`, which needs
+    the same id/orientation-level walking but stops short of resolving to
+    coordinates)."""
 
     def __init__(self, g: Graph) -> None:
-        self.g = g
+        super().__init__(g)
         self._cache: dict[str, Any] = {}
         self._components_cache: dict[str, dict] = {}
-
-    # ------------------------------------------------------------------
-    # RDF helpers
-    # ------------------------------------------------------------------
-
-    def _items(self, list_node) -> list:
-        """Return Python list from an RDF list node, or [] if absent/nil."""
-        if list_node in (None, RDF.nil):
-            return []
-        try:
-            return list(Collection(self.g, list_node))
-        except Exception:
-            return []
-
-    def _is_list_head(self, node) -> bool:
-        """True if *node* is a BNode that heads an RDF list (has rdf:first)."""
-        return isinstance(node, BNode) and self.g.value(node, RDF.first) is not None
-
-    def _related_features(self, topo_node):
-        """Return the topo:relatedFeatures / geojson:relatedFeatures RDF list
-        node for a topology node. Data in the wild uses either predicate
-        interchangeably (e.g. topo:Edge nodes commonly carry topo:
-        relatedFeatures, while geojson:LineString nodes carry geojson:
-        relatedFeatures), so both are tried."""
-        return (self.g.value(topo_node, TOPO.relatedFeatures)
-                or self.g.value(topo_node, GEOJSON.relatedFeatures))
-
-    def _ref_to_uri(self, ref_str: str) -> URIRef:
-        """
-        Convert a topo:ref string literal to a URIRef.
-
-        topo:ref values are plain string literals carrying a prefixed name,
-        e.g. "uuid:abc123".  We resolve the prefix against the graph's
-        namespace bindings; on failure we treat the whole string as a bare URI.
-        """
-        if ":" in ref_str:
-            prefix, local = ref_str.split(":", 1)
-            for p, ns in self.g.namespaces():
-                if p == prefix:
-                    return URIRef(str(ns) + local)
-        return URIRef(ref_str)
-
-    def _directed_refs(self, list_node) -> list[tuple[str, URIRef]]:
-        """
-        Parse an RDF list of directed-reference blank nodes.
-        Each item: topo:orientation "+" | "-",  topo:ref "<prefixed-name>".
-        Returns [(orientation, resolved_uri), ...]
-        """
-        result = []
-        for item in self._items(list_node):
-            orientation = str(self.g.value(item, TOPO.orientation) or "+")
-            ref_val = self.g.value(item, TOPO.ref)
-            if ref_val is not None:
-                result.append((orientation, self._ref_to_uri(str(ref_val))))
-        return result
 
     # ------------------------------------------------------------------
     # Coordinate helpers
@@ -571,13 +512,15 @@ class _TopoResolver:
 
 def load_topo(source, *, include_collections=False):
     """
-    Parse a Turtle topology file and return GeoJSON geometries for every
-    feature, indexed by both full URI string and qname.
+    Parse a Turtle or JSON-LD topology file and return GeoJSON geometries for
+    every feature, indexed by both full URI string and qname.
 
     Parameters
     ----------
     source : str or rdflib.Graph
-        File path, URL, or a pre-parsed rdflib.Graph.
+        File path, URL, RDF text, file-like object, or a pre-parsed
+        rdflib.Graph. Turtle and JSON-LD are both accepted (see
+        `topo_rdf_common.load_graph` for format resolution).
     include_collections : bool, default False
         If True, also attempt to resolve geojson:FeatureCollection nodes.
 
@@ -616,7 +559,7 @@ def load_topo(source, *, include_collections=False):
 
 def load_topo_components(source, *, include_collections=False):
     """
-    Parse a Turtle topology file and return, for every feature, the terminal
+    Parse a Turtle or JSON-LD topology file and return, for every feature, the terminal
     Edge/Point features that compose its topology — however many Ring/Face/
     Shell/Solid levels sit in between (a Face's edges, or a Solid's edges and
     points several levels down, are all flattened the same way).
@@ -654,43 +597,19 @@ def load_topo_components(source, *, include_collections=False):
 
 
 def _load_graph(source) -> Graph:
-    if isinstance(source, Graph):
-        return source
-    g = Graph()
-    g.parse(source, format="turtle")
-    return g
+    """Parse *source* (path/URL/string/file-like/pre-parsed Graph) as Turtle
+    or JSON-LD; see `topo_rdf_common.load_graph` for format resolution."""
+    return _shared_load_graph(source)
 
 
 def _feature_uris(g: Graph, include_collections: bool) -> set:
-    feature_uris = set()
-    for s in g.subjects(RDF.type, GEOJSON.Feature):
-        if isinstance(s, URIRef):
-            feature_uris.add(s)
-    if include_collections:
-        for s in g.subjects(RDF.type, GEOJSON.FeatureCollection):
-            if isinstance(s, URIRef):
-                feature_uris.add(s)
-    return feature_uris
+    return _shared_feature_uris(g, include_collections)
 
 
 def _qname_fn(g: Graph):
     """Return a uri_str -> qname_or_None function using longest-prefix-first
     namespace matching."""
-    ns_by_uri = sorted(
-        [(str(ns), str(prefix)) for prefix, ns in g.namespaces()],
-        key=lambda t: len(t[0]),
-        reverse=True,
-    )
-
-    def _qname(uri_str):
-        for ns_uri, prefix in ns_by_uri:
-            if uri_str.startswith(ns_uri):
-                local = uri_str[len(ns_uri):]
-                if local:
-                    return f"{prefix}:{local}" if prefix else local
-        return None
-
-    return _qname
+    return _shared_qname_fn(g)
 
 
 # ---------------------------------------------------------------------------
@@ -705,7 +624,7 @@ def _cli():
     parser = argparse.ArgumentParser(
         description="Resolve RDF topo-feature topology to GeoJSON geometries."
     )
-    parser.add_argument("source", help="Path or URL to a Turtle (.ttl) file")
+    parser.add_argument("source", help="Path or URL to a Turtle (.ttl) or JSON-LD (.jsonld) file")
     parser.add_argument("--key", metavar="URI_OR_QNAME",
                         help="Return geometry for a single feature key")
     parser.add_argument("--keys-only", action="store_true",
