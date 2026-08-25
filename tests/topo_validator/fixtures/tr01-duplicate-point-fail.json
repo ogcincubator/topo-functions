@@ -562,7 +562,7 @@
           "geometry": null,
           "topology": {
             "type": "Solid",
-            "shells": [
+            "directed_references": [
               {
                 "ref": "uuid:2fba8c41-56fd-4ca2-9924-65b61e2fe2e3",
                 "orientation": "+"

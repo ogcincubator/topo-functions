@@ -315,7 +315,7 @@ def _build_solids(data: dict[str, Any], shell_map: dict[str, Shell]) -> list[Sol
             continue
 
         shells, face_ids, face_orientations = _resolve_solid_shells(
-            _topology_list(feature, "shells"),
+            _topology_list(feature, "directed_references"),
             shell_map,
         )
 
