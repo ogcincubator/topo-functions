@@ -101,6 +101,18 @@ class ObservationCurve(TypedDict):
     source: Literal["observedVectors", "vectorObservations"]
 
 
+class ReferenceSurface(TypedDict):
+    """Reference surface face exemption for dangling-face validation.
+
+    A reference surface (for example, a ground surface offset derives from
+    a solid) is an input to a derivation rather than part of any solid's
+    boundary, so its faces are legitimately unowned by a solid.
+    """
+
+    ref: str
+    source: str
+
+
 class TopologyData(TypedDict):
     """Complete internal topology dataset used by the validator."""
 
@@ -109,6 +121,7 @@ class TopologyData(TypedDict):
     surfaces: list[Surface]
     solids: list[Solid]
     observation_curves: NotRequired[list[ObservationCurve]]
+    reference_surfaces: NotRequired[list[ReferenceSurface]]
 
 
 class TopologyIndexes(TypedDict):

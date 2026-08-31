@@ -15,13 +15,13 @@ TR-05 shared-edge orientation), not resolved geometry.
 
 Supported RDF shapes
 ---------------------
-topo:Edge (relatedFeatures = ordered point URIs)  -> Curve
+topo:Edge (relatedFeatures = ordered point URIs) -> Curve
 topo:Face (directedReferences = directed Ring URIs,
            each Ring's own directedReferences = directed Edge URIs) -> Surface
-topo:Shell (directedReferences = directed Face URIs)                -> one
+topo:Shell (directedReferences = directed Face URIs) -> one
            entry in a Solid's "shells"
-topo:Solid (shells = directed Shell URIs)                           -> Solid
-Points with direct geojson:geometry / dct:spatial coordinates       -> Point
+topo:Solid (shells = directed Shell URIs) -> Solid
+Points with direct geojson:geometry / dct:spatial coordinates -> Point
 
 Limitations
 -----------
@@ -34,8 +34,8 @@ that only depend on the topology *graph* (points, curves, surfaces, shell/
 solid structure) are fully supported; rules that depend on those domain
 properties need them supplied separately (e.g. merged in from CSDM JSON via
 `topo_validator.merge.merge_topology`).
-`geojson:Polygon`-style surfaces (undirected rings of edges, direction
-inferred from adjacency) are not handled -- only the `topo:Face`/`topo:Ring`
+`geojson: Polygon`-style surfaces (undirected rings of edges, direction
+inferred from adjacency) are not handled -- only the `topo: Face`/`topo:Ring`
 vocabulary, since orientation there is explicit and lossless.
 """
 
@@ -58,7 +58,7 @@ _GJ_LINESTRING = GEOJSON.LineString
 
 class _RdfTopologyBuilder(RdfTopologyWalker):
     """Walks a geojson-topo RDF graph to build the validator's internal
-    structural model (ids + orientation), rather than resolved geometry."""
+    structural model (ids "+" orientation), rather than resolved geometry."""
 
     def __init__(self, g: Graph) -> None:
         super().__init__(g)
@@ -80,7 +80,11 @@ class _RdfTopologyBuilder(RdfTopologyWalker):
                 continue
             items = self._items(coords_node)
             if items and all(isinstance(v, Literal) for v in items):
-                return {"id": self._id_of(uri), "coordinates": [float(str(v)) for v in items]}
+                point: Point = {
+                    "id": self._id_of(uri),
+                    "coordinates": [float(str(v)) for v in items],
+                }
+                return point
         return None
 
     def _curve(self, uri: URIRef, topo_node) -> Curve | None:
@@ -88,7 +92,8 @@ class _RdfTopologyBuilder(RdfTopologyWalker):
         vertices = [self._id_of(URIRef(str(ref))) for ref in self._items(rf_node)]
         if len(vertices) < 2:
             return None
-        return {"id": self._id_of(uri), "vertices": vertices}
+        curve: Curve = {"id": self._id_of(uri), "vertices": vertices}
+        return curve
 
     def _ring_members(self, dr_node) -> list[RingMember]:
         return [{"ref": self._id_of(ref), "orientation": orient}
@@ -105,7 +110,10 @@ class _RdfTopologyBuilder(RdfTopologyWalker):
             ring_members = self._ring_members(ring_dr)
             if ring_members:
                 rings.append({"type": "outer", "members": ring_members})
-        return {"id": self._id_of(uri), "rings": rings} if rings else None
+        if not rings:
+            return None
+        surface: Surface = {"id": self._id_of(uri), "rings": rings}
+        return surface
 
     def _shell_faces(self, topo_node) -> tuple[list[str], dict[str, str]]:
         dr_node = self.g.value(topo_node, TOPO.directedReferences)
@@ -183,6 +191,7 @@ class _RdfTopologyBuilder(RdfTopologyWalker):
             "surfaces": list(surfaces.values()),
             "solids": list(solids.values()),
             "observation_curves": [],
+            "reference_surfaces": [],
         }
 
 
@@ -211,8 +220,9 @@ def from_rdf_graph(source, *, format: str | None = None) -> TopologyData:
     -------
     TopologyData
         `{"points": [...], "curves": [...], "surfaces": [...],
-          "solids": [...], "observation_curves": []}`. See the module
-        docstring's "Limitations" section for what isn't populated.
+          "solids": [...], "observation_curves": [], "reference_surfaces": []}`.
+        See the module docstring's "Limitations" section for what isn't
+        populated.
     """
     g = _load_graph(source, format=format)
     return _RdfTopologyBuilder(g).build()

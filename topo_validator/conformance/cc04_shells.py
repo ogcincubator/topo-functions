@@ -123,6 +123,14 @@ def _referenced_face_ids(data: TopologyData) -> set[str]:
     }
 
 
+def _reference_surface_ids(data: TopologyData) -> set[str]:
+    """Return face ids that are exempt because they belong to a reference surface."""
+    return {
+        reference_surface["ref"]
+        for reference_surface in data.get("reference_surfaces", [])
+    }
+
+
 def _dangling_face_issue(surface_id: str) -> Issue:
     """Create a TR-18 issue for a surface that is not owned by any solid."""
     return err(
@@ -140,13 +148,20 @@ def validate_no_dangling_faces(
 
     A face that no solid owns cannot form part of any closed shell and is
     topologically orphaned.
+
+    Faces belonging to a parcel's declared reference surfaces are exempt. Such
+    a surface -- for example, the ground surface offset derives from a solid
+              -- is an input to the derivation rather than part of the derived
+    solid's boundary. They are recorded in the optional
+    "data['reference_surfaces']" list and skipped by this check.
     """
     referenced_faces = _referenced_face_ids(data)
+    exempt_faces = _reference_surface_ids(data)
     issues: list[Issue] = []
 
     for surface in data.get("surfaces", []):
         surface_id = surface["id"]
-        if surface_id not in referenced_faces:
+        if surface_id not in referenced_faces and surface_id not in exempt_faces:
             issues.append(_dangling_face_issue(surface_id))
 
     return issues

@@ -188,6 +188,7 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
     issues.extend(_validate_surfaces_structure(data["surfaces"]))
     issues.extend(_validate_solids_structure(data["solids"]))
     issues.extend(_validate_observation_curves_structure(data))
+    issues.extend(_validate_reference_surfaces_structure(data))
 
     return issues
 
@@ -244,7 +245,7 @@ def _validate_points_structure(
         points: Point records to validate.
         minimum_coordinate_length: Minimum coordinate list length to accept.
             Callers pass 2 for an all-2D dataset (see
-            `points_are_all_two_dimensional`) so 2D points aren't flagged as
+            `points_are_all_two_dimensional`), so 2D points aren't flagged as
             structurally invalid merely for lacking a z value.
     """
     issues: list[Issue] = []
@@ -702,6 +703,60 @@ def _validate_observation_curves_structure(data: Mapping[str, Any]) -> list[Issu
                     f"{path}.source must be 'observedVectors' or 'vectorObservations'",
                     path=f"{path}.source",
                     extra={"actual_value": source},
+                )
+            )
+
+    return issues
+
+
+def _validate_reference_surfaces_structure(data: Mapping[str, Any]) -> list[Issue]:
+    """Validate optional reference surface exemption records."""
+    reference_surfaces = data.get("reference_surfaces", [])
+
+    if not isinstance(reference_surfaces, list):
+        return [
+            err(
+                "INVALID_REFERENCE_SURFACES",
+                "reference_surfaces must be a list when present",
+                path="reference_surfaces",
+                extra={"actual_type": type(reference_surfaces).__name__},
+            )
+        ]
+
+    issues: list[Issue] = []
+    for index, reference_surface in enumerate(reference_surfaces):
+        path = f"reference_surfaces[{index}]"
+
+        if not isinstance(reference_surface, dict):
+            issues.append(
+                err(
+                    "INVALID_REFERENCE_SURFACE",
+                    f"{path} must be an object",
+                    path=path,
+                    extra={"actual_type": type(reference_surface).__name__},
+                )
+            )
+            continue
+
+        ref = reference_surface.get("ref")
+        if not isinstance(ref, str):
+            issues.append(
+                err(
+                    "INVALID_REFERENCE_SURFACE_REF",
+                    f"{path}.ref must be a string",
+                    path=f"{path}.ref",
+                    extra={"actual_type": type(ref).__name__},
+                )
+            )
+
+        source = reference_surface.get("source")
+        if not isinstance(source, str):
+            issues.append(
+                err(
+                    "INVALID_REFERENCE_SURFACE_SOURCE",
+                    f"{path}.source must be a string",
+                    path=f"{path}.source",
+                    extra={"actual_type": type(source).__name__},
                 )
             )
 

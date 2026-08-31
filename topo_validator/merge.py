@@ -12,7 +12,15 @@ of which source actually defined the referenced object.
 
 from __future__ import annotations
 
-from .model import Curve, ObservationCurve, Point, Solid, Surface, TopologyData
+from .model import (
+    Curve,
+    ObservationCurve,
+    Point,
+    ReferenceSurface,
+    Solid,
+    Surface,
+    TopologyData,
+)
 
 
 def merge_topology(*topologies: TopologyData) -> TopologyData:
@@ -20,8 +28,8 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
 
     Later arguments take precedence when the same id appears in more than one
     source (e.g. an inline CSDM override of an RDF-supplied default).
-    Observation-curve exemptions are deduplicated by (ref, source) instead,
-    since they have no id of their own.
+    Observation-curve and reference-surface exemptions are deduplicated by
+    (ref, source) instead, since they have no id of their own.
     """
     points: dict[str, Point] = {}
     curves: dict[str, Curve] = {}
@@ -29,6 +37,8 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
     solids: dict[str, Solid] = {}
     observation_curves: list[ObservationCurve] = []
     seen_observation_refs: set[tuple[str, str]] = set()
+    reference_surfaces: list[ReferenceSurface] = []
+    seen_reference_surface_refs: set[tuple[str, str]] = set()
 
     for topology in topologies:
         for point in topology.get("points", []):
@@ -44,6 +54,11 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
             if key not in seen_observation_refs:
                 seen_observation_refs.add(key)
                 observation_curves.append(observation_curve)
+        for reference_surface in topology.get("reference_surfaces", None) or []:
+            key = (reference_surface["ref"], reference_surface["source"])
+            if key not in seen_reference_surface_refs:
+                seen_reference_surface_refs.add(key)
+                reference_surfaces.append(reference_surface)
 
     return {
         "points": list(points.values()),
@@ -51,4 +66,5 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
         "surfaces": list(surfaces.values()),
         "solids": list(solids.values()),
         "observation_curves": observation_curves,
+        "reference_surfaces": reference_surfaces,
     }
