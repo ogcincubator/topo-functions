@@ -191,7 +191,7 @@ class _RdfTopologyBuilder(RdfTopologyWalker):
             "surfaces": list(surfaces.values()),
             "solids": list(solids.values()),
             "observation_curves": [],
-            "reference_surfaces": [],
+            "surface_shell_face_refs": [],
         }
 
 
@@ -220,7 +220,8 @@ def from_rdf_graph(source, *, format: str | None = None) -> TopologyData:
     -------
     TopologyData
         `{"points": [...], "curves": [...], "surfaces": [...],
-          "solids": [...], "observation_curves": [], "reference_surfaces": []}`.
+          "solids": [...], "observation_curves": [],
+          "surface_shell_face_refs": []}`.
         See the module docstring's "Limitations" section for what isn't
         populated.
     """

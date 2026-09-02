@@ -16,9 +16,9 @@ from .model import (
     Curve,
     ObservationCurve,
     Point,
-    ReferenceSurface,
     Solid,
     Surface,
+    SurfaceShellFaceReference,
     TopologyData,
 )
 
@@ -28,8 +28,9 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
 
     Later arguments take precedence when the same id appears in more than one
     source (e.g. an inline CSDM override of an RDF-supplied default).
-    Observation-curve and reference-surface exemptions are deduplicated by
-    (ref, source) instead, since they have no id of their own.
+    Observation-curve exemptions are deduplicated by (ref, source) and
+    surface shell face references by (ref, shell_id) instead, since neither
+    has an id of its own.
     """
     points: dict[str, Point] = {}
     curves: dict[str, Curve] = {}
@@ -37,8 +38,8 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
     solids: dict[str, Solid] = {}
     observation_curves: list[ObservationCurve] = []
     seen_observation_refs: set[tuple[str, str]] = set()
-    reference_surfaces: list[ReferenceSurface] = []
-    seen_reference_surface_refs: set[tuple[str, str]] = set()
+    surface_shell_face_refs: list[SurfaceShellFaceReference] = []
+    seen_surface_shell_face_refs: set[tuple[str, str]] = set()
 
     for topology in topologies:
         for point in topology.get("points", []):
@@ -54,11 +55,11 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
             if key not in seen_observation_refs:
                 seen_observation_refs.add(key)
                 observation_curves.append(observation_curve)
-        for reference_surface in topology.get("reference_surfaces", None) or []:
-            key = (reference_surface["ref"], reference_surface["source"])
-            if key not in seen_reference_surface_refs:
-                seen_reference_surface_refs.add(key)
-                reference_surfaces.append(reference_surface)
+        for face_ref in topology.get("surface_shell_face_refs", None) or []:
+            key = (face_ref["ref"], face_ref["shell_id"])
+            if key not in seen_surface_shell_face_refs:
+                seen_surface_shell_face_refs.add(key)
+                surface_shell_face_refs.append(face_ref)
 
     return {
         "points": list(points.values()),
@@ -66,5 +67,5 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
         "surfaces": list(surfaces.values()),
         "solids": list(solids.values()),
         "observation_curves": observation_curves,
-        "reference_surfaces": reference_surfaces,
+        "surface_shell_face_refs": surface_shell_face_refs,
     }

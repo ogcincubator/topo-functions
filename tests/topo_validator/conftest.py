@@ -319,20 +319,48 @@ def _deduplicate_curves(data: dict[str, Any]) -> dict[str, Any]:
 def _deduplicate_surfaces(data: dict[str, Any]) -> dict[str, Any]:
     """
     Merge surfaces that reference the same set of curves and remap solid face refs.
+
+    Two solids sharing a boundary face each wind that face outward for
+    themselves, so the duplicate's winding is the reverse of the canonical
+    one.  A solid that referenced the duplicate with orientation "+" therefore
+    has to reference the canonical surface with "-" for its outward normal to
+    survive the merge -- the same correction "_deduplicate_curves" applies to
+    ring members one level down.  Without it the shared face contributes its
+    flux with the wrong sign and the solid's computed volume is wrong, which
+    TR-26 reports as a declared-volume mismatch.
     """
     seen: dict[frozenset, str] = {}
+    directed_of: dict[str, set[tuple[str, str]]] = {}
+    reversed_of: dict[str, bool] = {}
     canonical_id: dict[str, str] = {}
     unique_surfaces: list[dict[str, Any]] = []
 
+    def _flip(o: str) -> str:
+        """Flip a face orientation sign."""
+        return "-" if o == "+" else "+"
+
     for sf in data["surfaces"]:
-        key: frozenset = frozenset(
-            m["ref"] for ring in sf.get("rings", []) for m in ring.get("members", [])
-        )
+        members = [
+            m for ring in sf.get("rings", []) for m in ring.get("members", [])
+        ]
+        key: frozenset = frozenset(m["ref"] for m in members)
+        directed = {(m["ref"], m["orientation"]) for m in members}
+
         if key in seen:
-            canonical_id[sf["id"]] = seen[key]
+            canonical = seen[key]
+            canonical_id[sf["id"]] = canonical
+            # Opposite winding shows up as every shared curve being used in
+            # the other direction. Anything else (a partial mismatch) is not a
+            # clean reversal, so leave the orientation alone and let the
+            # geometry rules report it rather than guessing at a flip.
+            reversed_of[sf["id"]] = directed == {
+                (ref, _flip(o)) for ref, o in directed_of[canonical]
+            }
         else:
             canonical_id[sf["id"]] = sf["id"]
+            reversed_of[sf["id"]] = False
             seen[key] = sf["id"]
+            directed_of[sf["id"]] = directed
             unique_surfaces.append(sf)
 
     def _remap_unique_face_ids(face_ids: list[Any]) -> list[str]:
@@ -351,18 +379,32 @@ def _deduplicate_surfaces(data: dict[str, Any]) -> dict[str, Any]:
 
         return remapped
 
-    def _remap_face_orientations(value: Any) -> dict[str, str]:
-        """Return face orientations keyed by canonical face id."""
-        if not isinstance(value, dict):
-            return {}
+    def _remap_face_orientations(face_ids: Any, value: Any) -> dict[str, str]:
+        """Return face orientations keyed by canonical face id.
 
+        Orientations against a reversed duplicate are flipped, so the face
+        keeps pointing the way the referencing solid intended.  A face with no
+        explicit entry is implicitly "+", so a reversed one gains an explicit
+        "-" -- fixtures that wind every face outward carry no orientations at
+        all, and leaving those implicit would drop the correction entirely.
+        """
+        orientations = value if isinstance(value, dict) else {}
         remapped: dict[str, str] = {}
-        for face_id, orientation in value.items():
+
+        for face_id, orientation in orientations.items():
             if not isinstance(face_id, str):
                 continue
 
-            canonical_face_id = canonical_id.get(face_id, face_id)
-            remapped.setdefault(canonical_face_id, orientation)
+            if reversed_of.get(face_id):
+                orientation = _flip(orientation)
+
+            remapped.setdefault(canonical_id.get(face_id, face_id), orientation)
+
+        for face_id in face_ids if isinstance(face_ids, list) else []:
+            if not isinstance(face_id, str) or not reversed_of.get(face_id):
+                continue
+
+            remapped.setdefault(canonical_id.get(face_id, face_id), "-")
 
         return remapped
 
@@ -372,7 +414,8 @@ def _deduplicate_surfaces(data: dict[str, Any]) -> dict[str, Any]:
             **solid,
             "faces": _remap_unique_face_ids(solid.get("faces", [])),
             "face_orientations": _remap_face_orientations(
-                solid.get("face_orientations", {})
+                solid.get("faces", []),
+                solid.get("face_orientations", {}),
             ),
         }
 
@@ -381,7 +424,8 @@ def _deduplicate_surfaces(data: dict[str, Any]) -> dict[str, Any]:
                 **shell,
                 "faces": _remap_unique_face_ids(shell.get("faces", [])),
                 "face_orientations": _remap_face_orientations(
-                    shell.get("face_orientations", {})
+                    shell.get("faces", []),
+                    shell.get("face_orientations", {}),
                 ),
             }
             for shell in solid.get("shells", [])

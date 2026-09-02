@@ -33,6 +33,8 @@ GROUND_SURFACE_FACES = (
     "uuid:785fe569-93c7-4a5a-b8dc-1ed6a4964029",
     "uuid:b631b943-8681-4ba7-baba-cbf90555d550",
 )
+# The surface-only shell that owns the ground faces above.
+GROUND_SURFACE_SHELL_ID = "uuid:ca9c4381-9422-4bbb-8f05-c8a835831933"
 
 
 def _ref(ref, orientation="+"):
@@ -213,18 +215,24 @@ def test_unknown_orientation_value_falls_back_to_positive():
 
 
 # ---------------------------------------------------------------------------
-# SubtendedAngle features in the edges collection
+# SubtendedAngle collections alongside the edges collection
 # ---------------------------------------------------------------------------
 
 
-def test_subtended_angle_features_are_not_loaded_as_curves():
-    """SubtendedAngle features share the "edges" collection with real edges but
-    reference a vertex plus two edges, so reading them as curves would yield
-    spurious unknown-point and dangling-curve issues."""
+def test_subtended_angle_collections_are_not_loaded_as_curves():
+    """SubtendedAngle features live in the "edges" collection but reference a
+    vertex plus two edges, so reading them as curves would yield spurious
+    unknown-point and dangling-curve issues.
+
+    They arrive in a FeatureCollection of their own, tagged with
+    "featureType": "SubtendedAngle", and the loader excludes the whole
+    collection on that tag.
+    """
     data = from_csdm_json(
         {
             "edges": [
                 {
+                    "featureType": "Edge",
                     "features": [
                         {
                             "id": "edge-1",
@@ -232,16 +240,21 @@ def test_subtended_angle_features_are_not_loaded_as_curves():
                                 "type": "Edge",
                                 "references": ["p1", "p2"],
                             },
-                        },
+                        }
+                    ],
+                },
+                {
+                    "featureType": "SubtendedAngle",
+                    "features": [
                         {
                             "id": "angle-1",
                             "topology": {
                                 "type": "SubtendedAngle",
                                 "references": ["p2", "edge-1", "edge-2"],
                             },
-                        },
-                    ]
-                }
+                        }
+                    ],
+                },
             ]
         }
     )
@@ -250,11 +263,11 @@ def test_subtended_angle_features_are_not_loaded_as_curves():
 
 
 # ---------------------------------------------------------------------------
-# Reference surface exemptions
+# Surface shell face references
 # ---------------------------------------------------------------------------
 
 
-def test_reference_surface_shell_expands_to_its_faces():
+def test_shell_faces_are_recorded_against_their_shell():
     data = from_csdm_json(
         {
             "faces": [{"features": [{"id": "F1"}, {"id": "F2"}]}],
@@ -271,47 +284,50 @@ def test_reference_surface_shell_expands_to_its_faces():
                     ]
                 }
             ],
-            "parcels": [
-                {
-                    "properties": {
-                        "spatialRepresentationDefinitions": {
-                            "referenceSurfaces": [
-                                {"id": "surface-ground-1", "ref": "ground-shell"}
-                            ]
-                        }
-                    }
-                }
-            ],
         }
     )
 
-    assert data["reference_surfaces"] == [
-        {"ref": "F1", "source": "surface-ground-1"},
-        {"ref": "F2", "source": "surface-ground-1"},
+    assert data["surface_shell_face_refs"] == [
+        {"ref": "F1", "shell_id": "ground-shell"},
+        {"ref": "F2", "shell_id": "ground-shell"},
     ]
 
 
-def test_reference_surface_may_name_a_face_directly():
+def test_a_face_shared_by_two_shells_is_recorded_once_per_shell():
     data = from_csdm_json(
         {
             "faces": [{"features": [{"id": "F1"}]}],
-            "parcels": [
+            "shells": [
                 {
-                    "properties": {
-                        "spatialRepresentationDefinitions": {
-                            "referenceSurfaces": [{"ref": "F1"}]
-                        }
-                    }
+                    "features": [
+                        {
+                            "id": "shell-a",
+                            "topology": {
+                                "type": "Shell",
+                                "directed_references": [_ref("F1")],
+                            },
+                        },
+                        {
+                            "id": "shell-b",
+                            "topology": {
+                                "type": "Shell",
+                                "directed_references": [_ref("F1")],
+                            },
+                        },
+                    ]
                 }
             ],
         }
     )
 
-    assert data["reference_surfaces"] == [{"ref": "F1", "source": "F1"}]
+    assert data["surface_shell_face_refs"] == [
+        {"ref": "F1", "shell_id": "shell-a"},
+        {"ref": "F1", "shell_id": "shell-b"},
+    ]
 
 
-def test_no_reference_surfaces_when_a_dataset_has_no_parcels():
-    assert from_csdm_json({})["reference_surfaces"] == []
+def test_no_surface_shell_face_refs_when_a_dataset_has_no_shells():
+    assert from_csdm_json({})["surface_shell_face_refs"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -338,16 +354,40 @@ def test_derived_solid_fixture_resolves_nested_offset_surface_shells():
 def test_derived_solid_fixture_exempts_the_ground_reference_surface():
     data = from_csdm_json(load_json(DERIVED_SOLID_FIXTURE))
 
-    exempt = {entry["ref"] for entry in data["reference_surfaces"]}
-    assert exempt == set(GROUND_SURFACE_FACES)
+    exempt = {entry["ref"] for entry in data["surface_shell_face_refs"]}
+    assert set(GROUND_SURFACE_FACES) <= exempt
 
-    # The reference surface belongs to no solid, which is the point of the
-    # exemption.
+    # All of the ground faces come from the one ground-surface shell.
+    ground_shells = {
+        entry["shell_id"]
+        for entry in data["surface_shell_face_refs"]
+        if entry["ref"] in GROUND_SURFACE_FACES
+    }
+    assert ground_shells == {GROUND_SURFACE_SHELL_ID}
+
+    # That shell belongs to no solid, which is the point of the exemption.
     solid_faces = set(data["solids"][0]["faces"])
     assert not solid_faces & set(GROUND_SURFACE_FACES)
 
 
-def test_derived_solid_fixture_validates_without_issues():
+def test_derived_solid_fixture_reports_only_its_declared_volume_defect():
+    """The fixture's published volume disagrees with its own geometry.
+
+    The solid is a vertical offset of the ground surface -- upper faces at
+    z=31.5..32.9, lower at z=17.5..18.9 -- so every vertical line crosses it
+    over exactly 14.0, and its volume is the footprint area times that offset:
+    809.344 x 14 = 11330.8, which is what the topology integrates to. The
+    fixture declares 11143.208 (an implied offset of 13.768), so TR-26 reports
+    the mismatch.
+
+    Every other rule passes, and the integral is translation-invariant, which
+    together pin the discrepancy on the declared value rather than on the
+    topology or the rule.
+    """
     data = from_csdm_json(load_json(DERIVED_SOLID_FIXTURE))
 
-    assert validate_topology(data) == []
+    issues = validate_topology(data)
+
+    assert [issue["code"] for issue in issues] == ["DECLARED_VOLUME_MISMATCH"]
+    assert issues[0]["extra"]["declared_volume"] == 11143.208
+    assert round(issues[0]["extra"]["topology_volume"], 1) == 11330.8

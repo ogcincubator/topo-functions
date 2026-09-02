@@ -188,7 +188,7 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
     issues.extend(_validate_surfaces_structure(data["surfaces"]))
     issues.extend(_validate_solids_structure(data["solids"]))
     issues.extend(_validate_observation_curves_structure(data))
-    issues.extend(_validate_reference_surfaces_structure(data))
+    issues.extend(_validate_surface_shell_face_refs_structure(data))
 
     return issues
 
@@ -709,54 +709,56 @@ def _validate_observation_curves_structure(data: Mapping[str, Any]) -> list[Issu
     return issues
 
 
-def _validate_reference_surfaces_structure(data: Mapping[str, Any]) -> list[Issue]:
-    """Validate optional reference surface exemption records."""
-    reference_surfaces = data.get("reference_surfaces", [])
+def _validate_surface_shell_face_refs_structure(
+    data: Mapping[str, Any],
+) -> list[Issue]:
+    """Validate optional surface shell face reference records."""
+    face_refs = data.get("surface_shell_face_refs", [])
 
-    if not isinstance(reference_surfaces, list):
+    if not isinstance(face_refs, list):
         return [
             err(
-                "INVALID_REFERENCE_SURFACES",
-                "reference_surfaces must be a list when present",
-                path="reference_surfaces",
-                extra={"actual_type": type(reference_surfaces).__name__},
+                "INVALID_SURFACE_SHELL_FACE_REFS",
+                "surface_shell_face_refs must be a list when present",
+                path="surface_shell_face_refs",
+                extra={"actual_type": type(face_refs).__name__},
             )
         ]
 
     issues: list[Issue] = []
-    for index, reference_surface in enumerate(reference_surfaces):
-        path = f"reference_surfaces[{index}]"
+    for index, face_ref in enumerate(face_refs):
+        path = f"surface_shell_face_refs[{index}]"
 
-        if not isinstance(reference_surface, dict):
+        if not isinstance(face_ref, dict):
             issues.append(
                 err(
-                    "INVALID_REFERENCE_SURFACE",
+                    "INVALID_SURFACE_SHELL_FACE_REF",
                     f"{path} must be an object",
                     path=path,
-                    extra={"actual_type": type(reference_surface).__name__},
+                    extra={"actual_type": type(face_ref).__name__},
                 )
             )
             continue
 
-        ref = reference_surface.get("ref")
+        ref = face_ref.get("ref")
         if not isinstance(ref, str):
             issues.append(
                 err(
-                    "INVALID_REFERENCE_SURFACE_REF",
+                    "INVALID_SURFACE_SHELL_FACE_REF_REF",
                     f"{path}.ref must be a string",
                     path=f"{path}.ref",
                     extra={"actual_type": type(ref).__name__},
                 )
             )
 
-        source = reference_surface.get("source")
-        if not isinstance(source, str):
+        shell_id = face_ref.get("shell_id")
+        if not isinstance(shell_id, str):
             issues.append(
                 err(
-                    "INVALID_REFERENCE_SURFACE_SOURCE",
-                    f"{path}.source must be a string",
-                    path=f"{path}.source",
-                    extra={"actual_type": type(source).__name__},
+                    "INVALID_SURFACE_SHELL_FACE_REF_SHELL_ID",
+                    f"{path}.shell_id must be a string",
+                    path=f"{path}.shell_id",
+                    extra={"actual_type": type(shell_id).__name__},
                 )
             )
 
