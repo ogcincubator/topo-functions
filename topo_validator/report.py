@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import html
 import json
-from datetime import datetime, timezone
 from typing import Literal, TypedDict
 
 from .model import Issue, errors_only
@@ -206,7 +205,6 @@ RULE_CHECKS: tuple[RuleCheck, ...] = (
             "INVALID_OBSERVATION_CURVE",
             "INVALID_OBSERVATION_CURVE_REF",
             "INVALID_OBSERVATION_CURVE_SOURCE",
-            "NO_3D_TOPOLOGY",
         },
     ),
     rule_check("TR-01", "UniquePoints", POINT_RULES_CLASS, {"DUPLICATE_POINT_PROXIMITY"}),
@@ -222,7 +220,7 @@ RULE_CHECKS: tuple[RuleCheck, ...] = (
         CURVE_RULES_CLASS,
         {"CURVE_INTERSECTION_NOT_AT_NODE"},
     ),
-    rule_check("TR-22", "NoRepeatedCurveInRing", CURVE_RULES_CLASS, {"CURVE_REPEATED_IN_RING"}),
+    rule_check("TR-22", "CurveOrientation", CURVE_RULES_CLASS, {"CURVE_REPEATED_IN_RING"}),
 
     rule_check("TR-04", "SurfaceClosedRing", SURFACE_RULES_CLASS, {"SURFACE_RING_NOT_CLOSED"}),
     rule_check("TR-05", "SharedSurfaceEdges", SURFACE_RULES_CLASS, {"SHARED_EDGE_SAME_ORIENTATION"}),
@@ -245,6 +243,12 @@ RULE_CHECKS: tuple[RuleCheck, ...] = (
             "SHELL_ORIENTATION_REVERSED",
             "INNER_SHELL_ORIENTATION_REVERSED",
         },
+    ),
+    rule_check(
+        "TR-26",
+        "DeclaredVolumeConsistency",
+        SOLID_RULES_CLASS,
+        {"DECLARED_VOLUME_MISMATCH"},
     ),
 
     rule_check("TR-08", "NoSolidOverlap", SOLID_RELATIONSHIP_RULES_CLASS, {"SOLID_OVERLAP"}),
@@ -400,7 +404,8 @@ def _text_issue_detail_lines(issues: list[Issue]) -> list[str]:
     lines = ["", "Issue details:"]
 
     for issue in issues:
-        issue_target = f" [{issue['object_id']}]" if issue.get("object_id") else ""
+        object_id = issue.get("object_id")
+        issue_target = f" [{object_id}]" if object_id else ""
         lines.append(
             f"- {issue['severity'].upper()} {issue['code']}{issue_target}: "
             f"{issue['message']}"
@@ -528,17 +533,12 @@ def _html_issue_details(issues: list[Issue]) -> str:
         """
 
 
-def to_html_report(
-    issues: list[Issue],
-    source_name: str | None = None,
-    executed_at: str | None = None,
-) -> str:
+def to_html_report(issues: list[Issue], source_name: str | None = None) -> str:
     """Return a human-readable HTML report for validation issues.
 
     Args:
         issues: Validation issues returned by the validator.
         source_name: Optional name of the validated input file to display in the report.
-        executed_at: DateTime that the report is executed
 
     Returns:
         Complete standalone HTML report string.
@@ -547,17 +547,11 @@ def to_html_report(
     error_count = len(errors_only(issues))
     valid = error_count == 0
     validation_status = _validation_status(issue_count, error_count)
-    report_executed_at = (
-            executed_at or datetime.now(timezone.utc).isoformat(timespec="seconds"))
     source_heading = (
         f'\n    <p class="source-file">Test file: '
         f"<strong>{html.escape(source_name)}</strong></p>"
         if source_name
         else ""
-    )
-    execution_heading = (
-        f'\n    <p class="executed-at">Executed at: '
-        f"<strong>{html.escape(report_executed_at)}</strong></p>"
     )
 
     return f"""<!doctype html>
@@ -571,7 +565,7 @@ def to_html_report(
 </head>
 <body>
   <main>
-    <h1>Topology Validation Report</h1>{source_heading}{execution_heading}
+    <h1>Topology Validation Report</h1>{source_heading}
 
     <section class="summary">
       <div class="card">

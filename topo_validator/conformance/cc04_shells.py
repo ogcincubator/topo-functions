@@ -123,11 +123,17 @@ def _referenced_face_ids(data: TopologyData) -> set[str]:
     }
 
 
-def _reference_surface_ids(data: TopologyData) -> set[str]:
-    """Return face ids that are exempt because they belong to a reference surface."""
+def _surface_shell_face_ids(data: TopologyData) -> set[str]:
+    """Return face ids that belong to a CSDM shell.
+
+    Surface-only shells (shells not referenced by any solid, e.g. ground
+    surfaces) still legitimately own faces. Those faces are exempt from the
+    dangling check because they belong to a modelled surface, not to an
+    orphaned face.
+    """
     return {
-        reference_surface["ref"]
-        for reference_surface in data.get("reference_surfaces", [])
+        entry["ref"]
+        for entry in data.get("surface_shell_face_refs", [])
     }
 
 
@@ -144,25 +150,23 @@ def validate_no_dangling_faces(
     data: TopologyData,
 ) -> list[Issue]:
     """
-    TR-18: every surface (face) must be referenced by at least one solid shell.
+    TR-18: every surface (face) must be referenced by at least one solid
+    shell or belong to a surface-only shell.
 
-    A face that no solid owns cannot form part of any closed shell and is
-    topologically orphaned.
-
-    Faces belonging to a parcel's declared reference surfaces are exempt. Such
-    a surface -- for example, the ground surface offset derives from a solid
-              -- is an input to the derivation rather than part of the derived
-    solid's boundary. They are recorded in the optional
-    "data['reference_surfaces']" list and skipped by this check.
+    A face that no solid owns and that no shell references cannot form part
+    of any closed shell and is topologically orphaned. Faces recorded in
+    ``data['surface_shell_face_refs']`` are exempt because they belong to a
+    surface-only shell (e.g. a ground surface).
     """
     referenced_faces = _referenced_face_ids(data)
-    exempt_faces = _reference_surface_ids(data)
+    exempt_faces = _surface_shell_face_ids(data)
     issues: list[Issue] = []
 
     for surface in data.get("surfaces", []):
         surface_id = surface["id"]
-        if surface_id not in referenced_faces and surface_id not in exempt_faces:
-            issues.append(_dangling_face_issue(surface_id))
+        if surface_id in referenced_faces or surface_id in exempt_faces:
+            continue
+        issues.append(_dangling_face_issue(surface_id))
 
     return issues
 

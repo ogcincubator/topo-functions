@@ -22,6 +22,30 @@ def euclidean_dist(a: Coordinate3D, b: Coordinate3D) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
+def vec_sub(a: list[float], b: list[float]) -> list[float]:
+    """Return vector a minus vector b."""
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+
+
+# The test suite's standalone validator (src/tests/unit/wa_csdm_topology_rules/
+# validator.py) carries its own copy of this helper on purpose: it reimplements
+# the topology rules independently so the two can be cross-checked, and sharing
+# a vector primitive would let one bug agree with itself on both sides.
+# noinspection DuplicatedCode
+def vec_cross(a: list[float], b: list[float]) -> list[float]:
+    """Return the 3D cross-product of two vectors."""
+    return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+
+
+def vec_dot(a: list[float], b: list[float]) -> float:
+    """Return the 3D dot product of two vectors."""
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
 def segments_intersect_3d(
     p1: list[float],
     p2: list[float],
@@ -51,28 +75,12 @@ def segments_intersect_3d(
     A proper interior intersection requires 0 < t < 1 and 0 < s < 1.
     """
 
-    def _sub(a: list[float], b: list[float]) -> list[float]:
-        """Return vector a minus vector b."""
-        return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+    d1 = vec_sub(p2, p1)  # direction of segment 1
+    d2 = vec_sub(p4, p3)  # direction of segment 2
+    r = vec_sub(p3, p1)  # vector from p1 to p3
 
-    def _cross(a: list[float], b: list[float]) -> list[float]:
-        """Return the 3D cross-product of two vectors."""
-        return [
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        ]
-
-    def _dot(a: list[float], b: list[float]) -> float:
-        """Return the 3D dot product of two vectors."""
-        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-
-    d1 = _sub(p2, p1)  # direction of segment 1
-    d2 = _sub(p4, p3)  # direction of segment 2
-    r = _sub(p3, p1)  # vector from p1 to p3
-
-    n = _cross(d1, d2)  # d1 × d2
-    n_sq = _dot(n, n)
+    n = vec_cross(d1, d2)  # d1 × d2
+    n_sq = vec_dot(n, n)
 
     if n_sq < tol * tol:
         # Segments are parallel (or degenerate) — no proper interior crossing
@@ -80,13 +88,13 @@ def segments_intersect_3d(
 
     # Coplanarity guard: perpendicular distance² between the infinite lines
     # = (r · n)² / n_sq must be below tol²
-    rn = _dot(r, n)
+    rn = vec_dot(r, n)
     if (rn * rn) / n_sq > tol * tol:
         return False  # Skew lines — no intersection
 
     # Parametric parameters along each segment
-    t = _dot(_cross(r, d2), n) / n_sq
-    s = _dot(_cross(r, d1), n) / n_sq
+    t = vec_dot(vec_cross(r, d2), n) / n_sq
+    s = vec_dot(vec_cross(r, d1), n) / n_sq
 
     return 0.0 < t < 1.0 and 0.0 < s < 1.0
 
@@ -200,6 +208,133 @@ def ring_coords(
     return coords
 
 
+HOLE_RING_TYPES: frozenset[str] = frozenset({"inner", "hole"})
+
+
+def ring_is_hole(ring: Ring) -> bool:
+    """True when *ring* is labelled as an interior (hole) boundary."""
+    return str(ring.get("type", "outer")).lower() in HOLE_RING_TYPES
+
+
+def ring_extent(coords: list[list[float]]) -> float:
+    """Return the summed x/y/z span of a ring — an inexpensive size proxy."""
+    return sum(
+        max(c[k] for c in coords) - min(c[k] for c in coords) for k in range(3)
+    )
+
+
+def face_ring_pairs(
+    surface: Surface,
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+) -> list[tuple[Ring, list[list[float]]]]:
+    """
+    Resolve every ring of *surface* to a ``(ring, coords)`` pair.
+
+    Rings whose curves or points are missing, and rings with fewer than three
+    vertices (which bound no area), are dropped — so indices do NOT line up
+    with ``surface["rings"]``.
+    """
+    pairs: list[tuple[Ring, list[list[float]]]] = []
+    for ring in surface.get("rings", []):
+        coords = ring_coords(ring, curves, points)
+        if coords and len(coords) >= 3:
+            pairs.append((ring, coords))
+    return pairs
+
+
+def split_face_rings(
+    pairs: list[tuple[Ring, list[list[float]]]],
+) -> tuple[int, list[int]]:
+    """
+    Return ``(outer_index, hole_indices)`` into *pairs*.
+
+    Rings labelled "inner"/"hole" are excluded from the outer candidates, so an
+    explicit label decides — including when two rings span the same bounding
+    box, where an extent alone cannot choose.  Extent then picks among the
+    remaining candidates and vetoes the labels when a ring called a hole is
+    *strictly* larger than the best labelled outer ring, since that means the
+    labels are wrong for this face.  Faces with no hole labels fall through to
+    a pure extent.
+    """
+    order = list(range(len(pairs)))
+    extents = [ring_extent(coords) for _, coords in pairs]
+
+    def extent_at(index: int) -> float:
+        """Extent of the ring at *index* — the sort key for the max() calls."""
+        return extents[index]
+
+    candidates = [i for i in order if not ring_is_hole(pairs[i][0])] or order
+    outer_index = max(candidates, key=extent_at)
+    if extents[outer_index] < max(extents):
+        outer_index = max(order, key=extent_at)
+    return outer_index, [i for i in order if i != outer_index]
+
+
+def polygon_normal(coords: list[list[float]]) -> list[float] | None:
+    """
+    Return the Newell normal of a planar polygon, or None when degenerate.
+
+    Not normalised: only its direction is used to compare two rings' windings.
+    """
+    if len(coords) < 3:
+        return None
+    nx = ny = nz = 0.0
+    for i, current in enumerate(coords):
+        nxt = coords[(i + 1) % len(coords)]
+        nx += (current[1] - nxt[1]) * (current[2] + nxt[2])
+        ny += (current[2] - nxt[2]) * (current[0] + nxt[0])
+        nz += (current[0] - nxt[0]) * (current[1] + nxt[1])
+    if nx * nx + ny * ny + nz * nz == 0.0:
+        return None
+    return [nx, ny, nz]
+
+
+def face_polygons(
+    surface: Surface,
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+    orientation: Orientation = "+",
+) -> list[list[list[float]]]:
+    """
+    Return the polygons of one face for signed-volume integration.
+
+    A face bounded by an outer ring and one or more holes encloses
+    ``region(outer) − region(hole)``, so its flux must be
+    ``flux(outer) − flux(hole)``.  Fan triangulation cannot express a hole, so
+    the subtraction is produced by emitting every hole ring wound *opposite* to
+    the outer ring — decided from the rings' own normals rather than assumed
+    from the source data, so the result does not depend on the exporter's
+    winding convention.
+
+    ``orientation`` is the face's orientation within its shell; "-" reverses
+    the whole face, outer ring, and holes together.
+    """
+    pairs = face_ring_pairs(surface, curves, points)
+    if not pairs:
+        return []
+
+    outer_index, hole_indices = split_face_rings(pairs)
+    outer_normal = polygon_normal(pairs[outer_index][1])
+
+    polygons: list[list[list[float]]] = [pairs[outer_index][1]]
+    for index in hole_indices:
+        coords = pairs[index][1]
+        hole_normal = polygon_normal(coords)
+        co_wound = (
+            outer_normal is not None
+            and hole_normal is not None
+            and sum(hole_normal[k] * outer_normal[k] for k in range(3)) > 0.0
+        )
+        # A degenerate (collinear) hole has no normal and passes through
+        # unchanged; it contributes zero flux under fan triangulation anyway.
+        polygons.append(list(reversed(coords)) if co_wound else coords)
+
+    if orientation == "-":
+        polygons = [list(reversed(poly)) for poly in polygons]
+    return polygons
+
+
 def signed_volume_of_polygons(polygons: list[list[list[float]]]) -> float:
     """
     Compute the signed volume of a closed polyhedron from its face polygons.
@@ -221,12 +356,7 @@ def signed_volume_of_polygons(polygons: list[list[list[float]]]) -> float:
             continue
         v0 = poly[0]
         for i in range(1, n - 1):
-            v1 = poly[i]
-            v2 = poly[i + 1]
-            cx = v1[1] * v2[2] - v1[2] * v2[1]
-            cy = v1[2] * v2[0] - v1[0] * v2[2]
-            cz = v1[0] * v2[1] - v1[1] * v2[0]
-            total += v0[0] * cx + v0[1] * cy + v0[2] * cz
+            total += vec_dot(v0, vec_cross(poly[i], poly[i + 1]))
     return total / 6.0
 
 

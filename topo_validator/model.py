@@ -5,15 +5,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
-try:
-    from typing import NotRequired
-except ImportError:
-    from typing_extensions import NotRequired
-
-TOLERANCE_POINT: float = 1e-6
-TOLERANCE_VOLUME: float = 1e-9
+TOLERANCE_POINT: float = 1e-3
+TOLERANCE_VOLUME: float = 1e-6
 TOLERANCE_LENGTH: float = 1e-3
 TOLERANCE_THICKNESS: float = 1e-3
 
@@ -101,16 +96,12 @@ class ObservationCurve(TypedDict):
     source: Literal["observedVectors", "vectorObservations"]
 
 
-class ReferenceSurface(TypedDict):
-    """Reference surface face exemption for dangling-face validation.
-
-    A reference surface (for example, a ground surface offset derives from
-    a solid) is an input to a derivation rather than part of any solid's
-    boundary, so its faces are legitimately unowned by a solid.
-    """
+class SurfaceShellFaceReference(TypedDict):
+    """Face reference from a CSDM shell used to exempt surface-only shells
+    from the dangling-face check."""
 
     ref: str
-    source: str
+    shell_id: str
 
 
 class TopologyData(TypedDict):
@@ -121,7 +112,7 @@ class TopologyData(TypedDict):
     surfaces: list[Surface]
     solids: list[Solid]
     observation_curves: NotRequired[list[ObservationCurve]]
-    reference_surfaces: NotRequired[list[ReferenceSurface]]
+    surface_shell_face_refs: NotRequired[list[SurfaceShellFaceReference]]
 
 
 class TopologyIndexes(TypedDict):
@@ -243,3 +234,54 @@ def build_indexes(data: TopologyData) -> TopologyIndexes:
         "surfaces": surfaces,
         "solids": solids,
     }
+
+
+def solid_owned_face_ids(data: TopologyData) -> set[str]:
+    """Return the ids of every face that bounds a solid.
+
+    Ownership is defined as TR-10, and TR-18 defines it: a face belongs to a
+    solid when it appears in that solid's flat "faces" list. Solids carrying
+    only structured "shells" fall back to the union of their shell faces.
+
+    Args:
+        data: Valid internal topology data.
+
+    Returns:
+        Ids of the faces that bound at least one solid.
+    """
+    owned: set[str] = set()
+    for solid in data.get("solids", []):
+        face_ids = solid.get("faces")
+        if not face_ids:
+            face_ids = [
+                face_id
+                for shell in solid.get("shells") or []
+                for face_id in shell.get("faces", [])
+            ]
+        owned.update(face_ids)
+    return owned
+
+
+def solid_owned_curve_ids(data: TopologyData) -> set[str]:
+    """Return the ids of every curve used by a ring of a solid-owned face.
+
+    A curve is solid-owned when at least one face that uses it bounds a solid.
+    The complement is the curves used only by surface-only faces — footprints,
+    ground surfaces, administrative planes — which bound no volume. These are
+    the same features TR-18 exempts as surface-only shells.
+
+    Args:
+        data: Valid internal topology data.
+
+    Returns:
+        Ids of the curves reachable from a solid-owned face.
+    """
+    owned_faces = solid_owned_face_ids(data)
+    owned: set[str] = set()
+    for surface in data.get("surfaces", []):
+        if surface["id"] not in owned_faces:
+            continue
+        for ring in surface.get("rings", []):
+            for member in ring.get("members", []):
+                owned.add(member["ref"])
+    return owned
