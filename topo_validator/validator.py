@@ -839,10 +839,7 @@ def validate_topology(
         if selected and cc.CONFORMANCE_CLASS_ID not in selected:
             continue
 
-        class_label = (
-            f"{cc.CONFORMANCE_CLASS_ID} "
-            f"{getattr(cc, 'CONFORMANCE_CLASS_NAME', cc.__name__)}"
-        )
+        class_label = f"{cc.CONFORMANCE_CLASS_ID} {cc.CONFORMANCE_CLASS_NAME}"
 
         if progress is not None:
             progress(f"Running {class_label}")

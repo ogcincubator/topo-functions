@@ -4,8 +4,19 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal
+
+if sys.version_info >= (3, 11):
+    from typing import NotRequired, TypedDict
+else:
+    # "NotRequired" arrived in 3.11, so in 3.10 it comes from
+    # typing_extensions -- declared in pyproject under that same version
+    # marker. "TypedDict" is taken from there too, so the two stay from one
+    # source: only the typing_extensions TypedDict knows how to read
+    # NotRequired when it computes __required_keys__.
+    from typing_extensions import NotRequired, TypedDict
 
 TOLERANCE_POINT: float = 1e-3
 TOLERANCE_VOLUME: float = 1e-6
