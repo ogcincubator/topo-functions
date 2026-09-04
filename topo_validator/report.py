@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import json
+from datetime import datetime
 from typing import Literal, TypedDict
 
 from .model import Issue, errors_only
@@ -128,7 +129,18 @@ thead th {
   color: var(--muted);
   font-style: italic;
 }
+
+.source-file,
+.generated-at {
+  margin: 0.25rem 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
 """
+
+# Run timestamp format: local date and time with the UTC offset, so a report
+# archived from a machine in another timezone is still unambiguous.
+GENERATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S %z"
 
 
 class RuleCheck(TypedDict):
@@ -231,6 +243,7 @@ RULE_CHECKS: tuple[RuleCheck, ...] = (
 
     rule_check("TR-06", "ClosedSolid", SHELL_FACE_RULES_CLASS, {"OPEN_SOLID_SHELL"}),
     rule_check("TR-18", "NoDanglingFaces", SHELL_FACE_RULES_CLASS, {"DANGLING_FACE"}),
+    rule_check("TR-27", "ShellClosure", SHELL_FACE_RULES_CLASS, {"SHELL_NOT_CLOSED"}),
 
     rule_check("TR-07", "PositiveVolume", SOLID_RULES_CLASS, {"ZERO_OR_NEGATIVE_VOLUME"}),
     rule_check("TR-19", "MinimumSolidThickness", SOLID_RULES_CLASS, {"SOLID_BELOW_MINIMUM_THICKNESS"}),
@@ -271,9 +284,6 @@ RULE_CHECKS: tuple[RuleCheck, ...] = (
             "EASEMENT_MISSING_BURDENED",
             "UNKNOWN_BURDENED_REFERENCE",
             "EASEMENT_NOT_CONTAINED_IN_BURDENED",
-            "EASEMENT_MISSING_SERVIENT",
-            "UNKNOWN_SERVIENT_REFERENCE",
-            "EASEMENT_NOT_CONTAINED_IN_SERVIENT",
         },
     ),
     rule_check(
@@ -533,12 +543,20 @@ def _html_issue_details(issues: list[Issue]) -> str:
         """
 
 
-def to_html_report(issues: list[Issue], source_name: str | None = None) -> str:
+def to_html_report(
+    issues: list[Issue],
+    source_name: str | None = None,
+    generated_at: datetime | None = None,
+) -> str:
     """Return a human-readable HTML report for validation issues.
 
     Args:
         issues: Validation issues returned by the validator.
         source_name: Optional name of the validated input file to display in the report.
+        generated_at: Timestamp shown as the run time, defaulting to now in the
+            local timezone. Pass an explicit value to make the output
+            reproducible — a report regenerated for comparison, or a test
+            asserting on the HTML, otherwise differs on every run.
 
     Returns:
         Complete standalone HTML report string.
@@ -554,6 +572,16 @@ def to_html_report(issues: list[Issue], source_name: str | None = None) -> str:
         else ""
     )
 
+    # astimezone() attaches the local offset to an otherwise naive now(), so
+    # %z renders rather than coming out empty.
+    run_time = (generated_at or datetime.now().astimezone()).strftime(
+        GENERATED_AT_FORMAT
+    )
+    generated_heading = (
+        f'\n    <p class="generated-at">Validated: '
+        f"<strong>{html.escape(run_time)}</strong></p>"
+    )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -565,7 +593,7 @@ def to_html_report(issues: list[Issue], source_name: str | None = None) -> str:
 </head>
 <body>
   <main>
-    <h1>Topology Validation Report</h1>{source_heading}
+    <h1>Topology Validation Report</h1>{source_heading}{generated_heading}
 
     <section class="summary">
       <div class="card">

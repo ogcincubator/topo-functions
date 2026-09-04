@@ -9,6 +9,7 @@ including overlap prevention and shared-face requirements.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Optional
 
 from ..geometry import (
@@ -16,12 +17,20 @@ from ..geometry import (
     bbox_strictly_overlaps,
 )
 from ..model import (
+    Curve,
     Issue,
+    Point,
     Solid,
+    Surface,
     Tolerances,
     TopologyData,
     build_indexes,
     err,
+)
+from ..solid_geometry import (
+    FaceGeometry,
+    solid_face_geometries,
+    solids_properly_overlap,
 )
 
 CONFORMANCE_CLASS_ID = "CC-06"
@@ -80,14 +89,45 @@ def _solid_overlap_issue(solid_id: str, other_id: str, theme: str) -> Issue:
     )
 
 
+def _face_geometry_resolver(
+    surfaces: dict[str, Surface],
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+) -> Callable[[Solid], list[FaceGeometry]]:
+    """Return a memoised accessor for a solid's exact face geometries.
+
+    Resolving a solid's faces dominates the cost of the narrow phase, and the
+    pair loop below revisits the same solid once per candidate neighbour, so
+    each solid is resolved at most once per call.
+    """
+    resolved: dict[str, list[FaceGeometry]] = {}
+
+    def faces_of(solid: Solid) -> list[FaceGeometry]:
+        solid_id = solid["id"]
+        if solid_id not in resolved:
+            resolved[solid_id] = solid_face_geometries(
+                solid, surfaces, curves, points
+            )
+        return resolved[solid_id]
+
+    return faces_of
+
+
 def validate_no_solid_overlap(
     data: TopologyData,
 ) -> list[Issue]:
     """
     TR-08: solids in the same theme must not overlap.
 
-    Overlap is detected by strict AABB intersection. Three categories of
-    a pair are exempt from the check:
+    Detection runs in two phases.  An AABB test is used only as a **broad
+    phase**: disjoint bounding boxes prove the solids cannot share volume, so
+    the pair is dismissed cheaply.  Overlapping bounding boxes prove nothing —
+    a U-shaped or L-shaped parcel wrapping a neighbour has a box that encloses
+    it entirely — so every surviving pair goes to the exact **narrow phase** in
+    :func:`solid_geometry.solids_properly_overlap`, which reports an overlap
+    only for genuine interpenetration or nesting.
+
+    Three categories of a pair are exempt before either phase runs:
 
     1. **Parent–child pairs** – containment is expected and verified by TR-09.
     2. **Disjoint-level pairs** – solids that declare non-overlapping "levels"
@@ -96,6 +136,11 @@ def validate_no_solid_overlap(
     3. **Topologically adjacent pairs** – solids that share one or more boundary
        faces are properly connected neighbours. Their AABBs will naturally
        overlap at the shared boundary, but the geometry does not intersect.
+
+    Exemptions 2 and 3 are retained for speed and because they encode survey
+    intent, but they are no longer load-bearing for correctness: the narrow
+    phase clears shared-boundary and wrapping arrangements on the geometry
+    alone.
     """
     issues: list[Issue] = []
     indexes = build_indexes(data)
@@ -109,6 +154,7 @@ def validate_no_solid_overlap(
         for solid in solids
     }
 
+    faces_of = _face_geometry_resolver(surfaces, curves, points)
     solids_by_theme = _group_solids_by_theme(solids)
 
     for theme, theme_solids in solids_by_theme.items():
@@ -125,13 +171,19 @@ def validate_no_solid_overlap(
                 if not isinstance(solid_a_id, str) or not isinstance(solid_b_id, str):
                     continue
 
+                # Broad phase: disjoint AABBs cannot share volume.
                 bbox_a = bounding_boxes.get(solid_a_id)
                 bbox_b = bounding_boxes.get(solid_b_id)
                 if not bbox_a or not bbox_b:
                     continue
+                if not bbox_strictly_overlaps(bbox_a, bbox_b):
+                    continue
 
-                if bbox_strictly_overlaps(bbox_a, bbox_b):
-                    issues.append(_solid_overlap_issue(solid_a_id, solid_b_id, theme))
+                # Narrow phase: exact interpenetration / nesting test.
+                if not solids_properly_overlap(faces_of(solid_a), faces_of(solid_b)):
+                    continue
+
+                issues.append(_solid_overlap_issue(solid_a_id, solid_b_id, theme))
 
     return issues
 

@@ -19,10 +19,17 @@ from ..model import (
     Point,
     Solid,
     Surface,
+    TOLERANCE_GEOMETRY,
     Tolerances,
     TopologyData,
     build_indexes,
     err,
+)
+from ..solid_geometry import (
+    boundary_escapes_solid,
+    face_edges,
+    first_decisive_containment,
+    solid_face_geometries,
 )
 
 CONFORMANCE_CLASS_ID = "CC-07"
@@ -55,51 +62,108 @@ def _unknown_parent_reference_issue(solid: Solid, parent_id: str) -> Issue:
 def _child_not_contained_issue(
     solid: Solid,
     parent_id: str,
-    child_bbox: tuple[float, float, float, float, float, float],
-    parent_bbox: tuple[float, float, float, float, float, float],
+    reason: str,
+    child_bbox: tuple[float, ...] | None,
+    parent_bbox: tuple[float, ...] | None,
 ) -> Issue:
-    """Build a TR-09 issue for a child solid outside its parent's bounding box."""
+    """Build a TR-09 issue for a child solid that escapes its parent."""
     solid_id = solid["id"]
 
     return err(
         "CHILD_NOT_CONTAINED_IN_PARENT",
-        f"Solid {solid_id} is not fully contained within parent {parent_id!r}",
+        f"Solid {solid_id} is not fully contained within "
+        f"parent {parent_id!r} ({reason})",
         object_id=solid_id,
         extra={
             "parent_id": parent_id,
+            "reason": reason,
             "child_bbox": child_bbox,
             "parent_bbox": parent_bbox,
         },
     )
 
 
-def _solid_is_contained_in_parent(
+def _exact_containment_failure_reason(
     solid: Solid,
     parent: Solid,
     surfaces: dict[str, Surface],
     curves: dict[str, Curve],
     points: dict[str, Point],
-) -> tuple[
-    bool,
-    tuple[float, float, float, float, float, float] | None,
-    tuple[float, float, float, float, float, float] | None,
-]:
-    """Return whether a child solid's bounding box is contained by its parent."""
-    child_bbox = solid_bbox(solid, surfaces, curves, points)
-    parent_bbox = solid_bbox(parent, surfaces, curves, points)
+) -> str | None:
+    """Return why *solid* is not contained in *parent*, or None when it is.
 
-    if child_bbox is None or parent_bbox is None:
-        return True, child_bbox, parent_bbox
+    Reached only once the bounding boxes agree that containment is possible, so
+    this is the test that decides it.
+    """
+    child_faces = solid_face_geometries(solid, surfaces, curves, points)
+    parent_faces = solid_face_geometries(parent, surfaces, curves, points)
 
-    return bbox_contains(parent_bbox, child_bbox), child_bbox, parent_bbox
+    if not child_faces or not parent_faces:
+        return None  # no usable geometry — other rules report that
+
+    child_edges = face_edges(child_faces)
+
+    if boundary_escapes_solid(
+        child_faces, child_edges, parent_faces, TOLERANCE_GEOMETRY
+    ):
+        return "part of the child boundary lies outside the parent"
+
+    decisive = first_decisive_containment(
+        child_faces, parent_faces, TOLERANCE_GEOMETRY
+    )
+    if decisive is False:
+        return "child lies outside the parent"
+
+    return None
+
+
+def _containment_failure_reason(
+    solid: Solid,
+    parent: Solid,
+    child_bbox: tuple[float, ...] | None,
+    parent_bbox: tuple[float, ...] | None,
+    surfaces: dict[str, Surface],
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+) -> str | None:
+    """Return why *solid* is not contained in *parent*, or None when it is."""
+    if child_bbox and parent_bbox and not bbox_contains(parent_bbox, child_bbox):
+        # Conclusive: part of the child is outside the parent's own extent.
+        return "child extends beyond the parent bounding box"
+
+    return _exact_containment_failure_reason(
+        solid, parent, surfaces, curves, points
+    )
 
 
 def validate_parent_containment(
     data: TopologyData,
 ) -> list[Issue]:
     """
-    TR-09: child parcel bounding box must be fully contained within its
-    parent parcel bounding box.
+    TR-09: a child parcel solid must lie entirely within its parent solid.
+
+    Containment is tested exactly, not by bounding box.  An AABB test is only
+    a necessary condition and fails in the dangerous direction: a child that
+    protrudes through a concave parent — out of the notch of an L-shaped
+    parent, say — still sits inside the parent's bounding box and would pass
+    unnoticed.  A false negative on containment is worse than a false positive,
+    because it silently certifies an invalid subdivision.
+
+    A child fails containment when either holds:
+
+    1. Part of its boundary lies strictly outside the parent — a vertex or a
+       stretch of edge that has escaped, whether by protruding through a face
+       or by sitting outside a concave parent entirely.
+    2. No part of its boundary is outside, but the child is not on the inside
+       either: it is a wholly separate solid.  One decisive vertex settles this.
+
+    The bounding box is still used first, as a cheap conclusive reject: a child
+    whose box escapes the parent's box cannot possibly be contained.
+
+    Solids that share boundary faces with their parent — a unit whose wall is
+    also the building envelope — are handled correctly: points on the shared
+    boundary are indeterminate rather than outside, so a decisive point is
+    sought instead of guessing.
     """
     issues: list[Issue] = []
     topology_indexes = build_indexes(data)
@@ -119,18 +183,24 @@ def validate_parent_containment(
             issues.append(_unknown_parent_reference_issue(solid, parent_id))
             continue
 
-        is_contained, child_bbox, parent_bbox = _solid_is_contained_in_parent(
+        child_bbox = solid_bbox(solid, surfaces, curves, points)
+        parent_bbox = solid_bbox(parent, surfaces, curves, points)
+
+        reason = _containment_failure_reason(
             solid,
             parent,
+            child_bbox,
+            parent_bbox,
             surfaces,
             curves,
             points,
         )
-        if not is_contained and child_bbox is not None and parent_bbox is not None:
+        if reason is not None:
             issues.append(
                 _child_not_contained_issue(
                     solid,
                     parent_id,
+                    reason,
                     child_bbox,
                     parent_bbox,
                 )

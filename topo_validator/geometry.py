@@ -13,8 +13,11 @@ from .model import (
     Orientation,
     Point,
     Ring,
+    Shell,
     Solid,
     Surface,
+    TOLERANCE_FACE_NORMAL,
+    TOLERANCE_GEOMETRY,
 )
 
 def euclidean_dist(a: Coordinate3D, b: Coordinate3D) -> float:
@@ -46,12 +49,17 @@ def vec_dot(a: list[float], b: list[float]) -> float:
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
+def vec_len(a: list[float]) -> float:
+    """Return the Euclidean length of a vector."""
+    return math.sqrt(vec_dot(a, a))
+
+
 def segments_intersect_3d(
     p1: list[float],
     p2: list[float],
     p3: list[float],
     p4: list[float],
-    tol: float = 1e-9,
+    tol: float = TOLERANCE_GEOMETRY,
 ) -> bool:
     """
     Return True when segment p1-p2 and segment p3-p4 properly intersect
@@ -72,17 +80,48 @@ def segments_intersect_3d(
       t = (r × d2) · n / |n|²
       s = (r × d1) · n / |n|²
 
-    A proper interior intersection requires 0 < t < 1 and 0 < s < 1.
+    A proper interior intersection requires *t* and *s* to be strictly inside
+    ``(0, 1)`` by at least ``tol`` of arc length.
+
+    Shared endpoints
+    ----------------
+    Segments that share an endpoint meet at a vertex.  That is the normal
+    condition for consecutive segments of a ring and for edges of adjacent
+    faces of the same solid, and is not a crossing.  Such pairs are rejected
+    up front: relying on the ``0 < t < 1`` bounds alone is not safe, because
+    a shared endpoint yields *t* and *s* of ``1 - 2.2e-16`` rather than
+    exactly 1 once the coordinates have been through projection arithmetic,
+    which slips through a strict comparison and reports a false crossing.
+
+    The interior bounds are therefore expressed as a distance (``tol`` metres)
+    converted to parameter space per segment, rather than as a bare ``0 < t``.
+
+    Mirrors the same helper in the test suite's independent validator
+    (src/tests/unit/wa_csdm_topology_rules/validator.py); the two engines must
+    agree on what counts as a crossing, so the guards are defined the same way
+    in both.  TR-02, TR-14, TR-15, and TR-24 all rest on this predicate.
     """
+    # Shared endpoint — segments meet at a vertex, which is not a crossing.
+    for a in (p1, p2):
+        for b in (p3, p4):
+            if euclidean_dist(a, b) <= tol:
+                return False
 
     d1 = vec_sub(p2, p1)  # direction of segment 1
     d2 = vec_sub(p4, p3)  # direction of segment 2
     r = vec_sub(p3, p1)  # vector from p1 to p3
 
+    len1 = vec_len(d1)
+    len2 = vec_len(d2)
+    if len1 <= tol or len2 <= tol:
+        return False  # degenerate (zero-length) segment
+
     n = vec_cross(d1, d2)  # d1 × d2
     n_sq = vec_dot(n, n)
 
-    if n_sq < tol * tol:
+    # Parallel guard on the *angle*, so it is independent of segment length:
+    # |d1 × d2| / (|d1|·|d2|) is sin(angle) between the directions.
+    if math.sqrt(n_sq) / (len1 * len2) <= tol:
         # Segments are parallel (or degenerate) — no proper interior crossing
         return False
 
@@ -96,7 +135,12 @@ def segments_intersect_3d(
     t = vec_dot(vec_cross(r, d2), n) / n_sq
     s = vec_dot(vec_cross(r, d1), n) / n_sq
 
-    return 0.0 < t < 1.0 and 0.0 < s < 1.0
+    # Convert the linear tolerance into parameter space for each segment so
+    # the interior test means "at least tol metres clear of either endpoint".
+    eps1 = tol / len1
+    eps2 = tol / len2
+
+    return eps1 < t < 1.0 - eps1 and eps2 < s < 1.0 - eps2
 
 
 def curve_end_id(curve: Curve, orientation: Orientation) -> str:
@@ -271,6 +315,26 @@ def split_face_rings(
     return outer_index, [i for i in order if i != outer_index]
 
 
+def polygon_area_vector(
+    poly: list[list[float]],
+) -> tuple[float, float, float]:
+    """Return the Newell area vector of *poly*, whose magnitude is 2·area.
+
+    The direction follows the polygon's winding, so summing this across an
+    oriented surface measures how far that surface is from closing — the basis
+    of the CC-04 shell-closure check.
+    """
+    nx = ny = nz = 0.0
+    n = len(poly)
+    for i in range(n):
+        current = poly[i]
+        nxt = poly[(i + 1) % n]
+        nx += (current[1] - nxt[1]) * (current[2] + nxt[2])
+        ny += (current[2] - nxt[2]) * (current[0] + nxt[0])
+        nz += (current[0] - nxt[0]) * (current[1] + nxt[1])
+    return nx, ny, nz
+
+
 def polygon_normal(coords: list[list[float]]) -> list[float] | None:
     """
     Return the Newell normal of a planar polygon, or None when degenerate.
@@ -279,15 +343,42 @@ def polygon_normal(coords: list[list[float]]) -> list[float] | None:
     """
     if len(coords) < 3:
         return None
-    nx = ny = nz = 0.0
-    for i, current in enumerate(coords):
-        nxt = coords[(i + 1) % len(coords)]
-        nx += (current[1] - nxt[1]) * (current[2] + nxt[2])
-        ny += (current[2] - nxt[2]) * (current[0] + nxt[0])
-        nz += (current[0] - nxt[0]) * (current[1] + nxt[1])
+    nx, ny, nz = polygon_area_vector(coords)
     if nx * nx + ny * ny + nz * nz == 0.0:
         return None
     return [nx, ny, nz]
+
+
+def polygon_plane(
+    coords: list[list[float]],
+) -> tuple[list[float], list[float]] | None:
+    """
+    Return ``(unit_normal, origin)`` for the plane of a polygon ring.
+
+    Uses Newell's method, which sums the cross products of every consecutive
+    edge pair rather than relying on any single vertex triple.  That keeps the
+    normal stable for the slightly non-planar rings that survey exports
+    routinely contain, and for rings whose first three vertices happen to be
+    collinear.
+
+    Returns None when the ring is degenerate (all vertices collinear, or fewer
+    than three vertices), in which case it bounds no area and cannot be crossed.
+
+    Distinct from :func:`polygon_normal`, which returns the un-normalised
+    vector used only to compare two rings' windings.  The exact solid-geometry
+    predicates need a unit normal and a point on the plane.
+    """
+    if len(coords) < 3:
+        return None
+
+    nx, ny, nz = polygon_area_vector(coords)
+
+    normal = [nx, ny, nz]
+    length = vec_len(normal)
+    if length <= TOLERANCE_FACE_NORMAL:
+        return None
+
+    return [nx / length, ny / length, nz / length], coords[0]
 
 
 def face_polygons(
@@ -335,6 +426,50 @@ def face_polygons(
     return polygons
 
 
+def solid_shells(solid: Solid) -> list[Shell]:
+    """Return a solid's structured shells, falling back to its flat face list.
+
+    Fixtures predating structured shells carry ``faces`` / ``face_orientations``
+    directly on the solid; those are treated as a single outer shell so every
+    shell-level rule sees the same shape of input.
+    """
+    fallback_shell: Shell = {
+        "type": "outer",
+        "faces": solid.get("faces", []),
+        "face_orientations": solid.get("face_orientations", {}),
+    }
+    return solid.get("shells") or [fallback_shell]
+
+
+def shell_polygons(
+    shell: Shell,
+    surfaces: dict[str, Surface],
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+) -> list[list[list[float]]]:
+    """
+    Return oriented polygons for every resolvable face of *shell*.
+
+    A face with holes contributes ``flux(outer) − flux(hole)``; ``face_polygons``
+    emits each hole ring wound against its outer ring to produce that
+    subtraction, so results do not depend on the exporter having counter-wound
+    its holes.
+    """
+    polygons: list[list[list[float]]] = []
+    face_orientations = shell.get("face_orientations", {})
+
+    for face_id in shell.get("faces", []):
+        surface = surfaces.get(face_id)
+        if surface is None:
+            continue
+
+        polygons += face_polygons(
+            surface, curves, points, face_orientations.get(face_id, "+")
+        )
+
+    return polygons
+
+
 def signed_volume_of_polygons(polygons: list[list[list[float]]]) -> float:
     """
     Compute the signed volume of a closed polyhedron from its face polygons.
@@ -348,15 +483,39 @@ def signed_volume_of_polygons(polygons: list[list[list[float]]]) -> float:
     A **positive** result means face normals point outward (right-hand rule,
     correct for an outer shell).  A **negative** result means the winding is
     reversed — all normals point inward.
+
+    Local origin
+    ------------
+    Vertices are shifted to the polygon set's own centroid before integrating.
+    For a closed surface that is a no-op — signed volume is
+    translation-invariant — but on projected survey coordinates it matters: a
+    parcel 6.5e6 m from the projection origin makes the raw integrand ~1e19 for
+    a ~1e2 answer, discarding most of the available precision.  And when the
+    surface is *not* closed, the result stops being translation-invariant, so a
+    distant origin multiplies the closure defect into a wildly wrong figure
+    instead of a merely wrong one.
     """
+    vertices = [
+        vertex for poly in polygons if len(poly) >= 3 for vertex in poly
+    ]
+    if not vertices:
+        return 0.0
+
+    count = len(vertices)
+    origin = [
+        sum(vertex[axis] for vertex in vertices) / count for axis in range(3)
+    ]
+
     total = 0.0
     for poly in polygons:
         n = len(poly)
         if n < 3:
             continue
-        v0 = poly[0]
+        v0 = vec_sub(poly[0], origin)
         for i in range(1, n - 1):
-            total += vec_dot(v0, vec_cross(poly[i], poly[i + 1]))
+            total += vec_dot(
+                v0, vec_cross(vec_sub(poly[i], origin), vec_sub(poly[i + 1], origin))
+            )
     return total / 6.0
 
 

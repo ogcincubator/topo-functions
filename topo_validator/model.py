@@ -4,24 +4,33 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, TypedDict
 
-if sys.version_info >= (3, 11):
-    from typing import NotRequired, TypedDict
-else:
-    # "NotRequired" arrived in 3.11, so in 3.10 it comes from
-    # typing_extensions -- declared in pyproject under that same version
-    # marker. "TypedDict" is taken from there too, so the two stay from one
-    # source: only the typing_extensions TypedDict knows how to read
-    # NotRequired when it computes __required_keys__.
-    from typing_extensions import NotRequired, TypedDict
+TOLERANCE_POINT: float = 5e-3
+TOLERANCE_VOLUME: float = 1e-3
+TOLERANCE_LENGTH: float = 5e-3
+TOLERANCE_THICKNESS: float = 5e-3
 
-TOLERANCE_POINT: float = 1e-3
-TOLERANCE_VOLUME: float = 1e-6
-TOLERANCE_LENGTH: float = 1e-3
-TOLERANCE_THICKNESS: float = 1e-3
+# Crossing / containment tolerance (metres).  This must stay at or above the
+# coordinate quantisation of the input: the STEP-to-topology writer rounds
+# projected ordinates to a fixed number of decimal places, and rounding x and y
+# independently displaces a vertex by up to half a unit in each axis.  On
+# geometry set at an angle to the projection grid that destroys the exact face
+# coincidence the source model had, so faces that touch arrive fractions of a
+# millimetre apart.  A tolerance finer than that reads the rounding as
+# interpenetration and reports contact between adjacent solids as an overlap.
+#
+# Not a field of ``Tolerances``: it is a property of the coordinate encoding
+# rather than a per-dataset choice, and the same constant is used by the test
+# suite's independent validator, so the two engines agree.
+TOLERANCE_GEOMETRY: float = 1e-3
+
+# Degenerate-face cutoff for the Newell normal.  This bounds |nx, ny, nz|,
+# which is TWICE THE FACE AREA in m², not a distance — it is deliberately not
+# TOLERANCE_GEOMETRY, because a millimetre distance tolerance applied to an
+# area would discard every real face smaller than 5 cm².
+TOLERANCE_FACE_NORMAL: float = 1e-6
 
 Severity = Literal["error", "warning"]
 Orientation = Literal["+", "-"]
@@ -247,12 +256,39 @@ def build_indexes(data: TopologyData) -> TopologyIndexes:
     }
 
 
+def solid_face_ids(solid: Solid) -> list[str]:
+    """Return the ids of every face bounding one solid.
+
+    The flat ``faces`` list is authoritative when present; a solid carrying
+    only structured ``shells`` falls back to the union of its shell faces.
+    ``loader`` populates both, so the fallback only matters for hand-built and
+    ``--raw-internal`` data — but every rule that asks "which faces does this
+    solid own?" must answer it the same way, or the rules disagree with each
+    other on the same solid.  TR-06, TR-10, and TR-18 all resolve ownership
+    through this function for that reason.
+
+    Args:
+        solid: Internal solid record.
+
+    Returns:
+        Ids of the faces bounding *solid*, in declaration order.
+    """
+    face_ids = solid.get("faces")
+    if face_ids:
+        return list(face_ids)
+
+    return [
+        face_id
+        for shell in solid.get("shells") or []
+        for face_id in shell.get("faces", [])
+    ]
+
+
 def solid_owned_face_ids(data: TopologyData) -> set[str]:
     """Return the ids of every face that bounds a solid.
 
-    Ownership is defined as TR-10, and TR-18 defines it: a face belongs to a
-    solid when it appears in that solid's flat "faces" list. Solids carrying
-    only structured "shells" fall back to the union of their shell faces.
+    Ownership is defined as TR-10, and TR-18 defines it — see
+    :func:`solid_face_ids`, which resolves it for a single solid.
 
     Args:
         data: Valid internal topology data.
@@ -262,14 +298,7 @@ def solid_owned_face_ids(data: TopologyData) -> set[str]:
     """
     owned: set[str] = set()
     for solid in data.get("solids", []):
-        face_ids = solid.get("faces")
-        if not face_ids:
-            face_ids = [
-                face_id
-                for shell in solid.get("shells") or []
-                for face_id in shell.get("faces", [])
-            ]
-        owned.update(face_ids)
+        owned.update(solid_face_ids(solid))
     return owned
 
 
