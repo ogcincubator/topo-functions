@@ -5,7 +5,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 
 TOLERANCE_POINT: float = 5e-3
 TOLERANCE_VOLUME: float = 1e-3
