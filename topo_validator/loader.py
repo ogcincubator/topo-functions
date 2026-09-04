@@ -23,6 +23,8 @@ from .model import (
     TopologyData,
 )
 
+_ORIENTATION_FLIP: dict[Orientation, Orientation] = {"+": "-", "-": "+"}
+
 
 def load_json(path: str | Path) -> dict[str, Any]:
     """Load a JSON object from the disk.
@@ -239,11 +241,115 @@ def _build_surfaces(data: dict[str, Any], ring_map: dict[str, Ring]) -> list[Sur
     return surfaces
 
 
+def _feature_ids(data: dict[str, Any], collection_name: str) -> set[str]:
+    """Return the set of feature ids declared in a CSDM collection."""
+    return {
+        feature["id"]
+        for feature in _iter_features(data, collection_name)
+        if isinstance(feature.get("id"), str)
+    }
+
+
+def _compose_orientations(outer: Orientation, inner: Orientation) -> Orientation:
+    """Compose a referencing shell's orientation with a nested member's."""
+    return inner if outer == "+" else _ORIENTATION_FLIP[inner]
+
+
+def _resolve_shell_members(
+    shell_id: str,
+    raw_shells: dict[str, list[Any]],
+    face_ids: set[str],
+    resolved: dict[str, tuple[list[str], dict[str, Orientation]]],
+    visiting: frozenset[str],
+) -> tuple[list[str], dict[str, Orientation]]:
+    """Flatten one shell's directed references into face ids and orientations.
+
+    A directed reference is treated as a face when its id belongs to a known
+    face feature, or when it is not a known shell feature -- so unresolvable
+    ids remain in "faces" for downstream missing-reference reporting. Any
+    other reference is a nested shell, which is resolved recursively and whose
+    face orientations are composed with the referencing orientation.
+
+    Faces are deduplicated, first reference winning, because
+    "Shell['face_orientations']" cannot represent one face at two orientations
+    and because a double-counted face would break the closed-shell curve
+    counting in TR-06.
+
+    Args:
+        shell_id: Shell feature id to resolve.
+        raw_shells: Raw directed reference lists keyed by shell feature id.
+        face_ids: Ids of every face feature in the dataset.
+        resolved: Memo of already-resolved shells, held at "+" orientation.
+        visiting: Shell ids on the current recursion path, used to break cycles.
+
+    Returns:
+        A tuple of ordered face ids and their orientations keyed by face id.
+    """
+    if shell_id in resolved:
+        return resolved[shell_id]
+    if shell_id in visiting:
+        # Reference cycle: contribute nothing rather than recursing forever.
+        # A shell first reached inside a broken cycle memoises the partial
+        # result, so a cyclic (malformed) shell graph flattens to something
+        # order-dependent but stable. Such a shell will not close, and the
+        # closed-shell rule TR-06 reports it.
+        return [], {}
+
+    faces: list[str] = []
+    face_orientations: dict[str, Orientation] = {}
+
+    def add_face(face_id: str, face_orientation: Orientation) -> None:
+        if face_id not in face_orientations:
+            faces.append(face_id)
+            face_orientations[face_id] = face_orientation
+
+    for raw_ref in raw_shells.get(shell_id, []):
+        if not isinstance(raw_ref, dict):
+            continue
+
+        ref = raw_ref.get("ref")
+        if not isinstance(ref, str):
+            continue
+
+        raw_orientation = raw_ref.get("orientation", "+")
+        orientation: Orientation = (
+            raw_orientation if raw_orientation in {"+", "-"} else "+"
+        )
+
+        if ref in face_ids or ref not in raw_shells:
+            add_face(ref, orientation)
+            continue
+
+        nested_faces, nested_orientations = _resolve_shell_members(
+            ref,
+            raw_shells,
+            face_ids,
+            resolved,
+            visiting | {shell_id},
+        )
+        for nested_face_id in nested_faces:
+            add_face(
+                nested_face_id,
+                _compose_orientations(
+                    orientation,
+                    nested_orientations[nested_face_id],
+                ),
+            )
+
+    resolved[shell_id] = (faces, face_orientations)
+    return faces, face_orientations
+
+
 def _build_shell_map(data: dict[str, Any]) -> dict[str, Shell]:
     """Build internal shell records from CSDM shell FeatureCollections.
 
-    Converts each shell's directed face references into internal face id and
-    orientation lists. Shell features without a string "id" are skipped.
+    A shell's directed references may point at faces, at other shells, or at a
+    mixture of the two -- the latter arising when a solid is constructed by
+    offset from a reference surface, so that its upper and lower boundaries are
+    themselves shells of faces. Nested shell references are flattened
+    recursively, so every returned shell exposes the flat face id and
+    orientation collections that the validation rules consume. Shell features
+    without a string "id" are skipped.
 
     Args:
         data: Parsed Topo Feature / 3D CSDM JSON object.
@@ -251,16 +357,28 @@ def _build_shell_map(data: dict[str, Any]) -> dict[str, Shell]:
     Returns:
         Shell records keyed by CSDM "shell" feature id.
     """
-    shell_map: dict[str, Shell] = {}
+    face_ids = _feature_ids(data, "faces")
 
+    raw_shells: dict[str, list[Any]] = {}
     for feature in _iter_features(data, "shells"):
         shell_id = feature.get("id")
-        if not isinstance(shell_id, str):
-            continue
+        if isinstance(shell_id, str):
+            raw_shells[shell_id] = _topology_list(feature, "directed_references")
 
-        faces, face_orientations = _shell_faces_from_raw(
-            _topology_list(feature, "directed_references")
+    resolved: dict[str, tuple[list[str], dict[str, Orientation]]] = {}
+    shell_map: dict[str, Shell] = {}
+
+    for shell_id in raw_shells:
+        faces, face_orientations = _resolve_shell_members(
+            shell_id,
+            raw_shells,
+            face_ids,
+            resolved,
+            frozenset(),
         )
+        # Each shell id resolves to its own faces/orientations objects, and
+        # "resolved" is discarded when this function returns, so these need no
+        # defensive copy. Callers that hand shells on to solids copy already.
         shell_map[shell_id] = {
             "type": "outer",
             "faces": faces,
@@ -437,7 +555,7 @@ def _build_observation_curves(data: dict[str, Any]) -> list[ObservationCurve]:
 
 
 def _build_surface_shell_face_refs(
-    data: dict[str, Any],
+    shell_map: dict[str, Shell],
 ) -> list[SurfaceShellFaceReference]:
     """Collect face references from every CSDM shell in the dataset.
 
@@ -446,23 +564,23 @@ def _build_surface_shell_face_refs(
     TR-18 would otherwise flag those faces as dangling. Recording every
     shell-owned face here lets the dangling-face check exempt them, matching
     the pattern used for observation curves.
+
+    Reads the flattened shells rather than the raw directed references, so a
+    shell that reaches its faces through nested shells contributes those real
+    face ids. Recording the nested shell's id instead would exempt an id no
+    surface has, leaving the faces it carries reported as dangling.
+
+    Args:
+        shell_map: Flattened shell records keyed by CSDM "shell" feature id.
+
+    Returns:
+        Face reference records with "ref" and "shell_id" fields.
     """
-    refs: list[SurfaceShellFaceReference] = []
-
-    for feature in _iter_features(data, "shells"):
-        shell_id = feature.get("id")
-        if not isinstance(shell_id, str):
-            continue
-
-        for face_ref in _topology_list(feature, "directed_references"):
-            if not isinstance(face_ref, dict):
-                continue
-
-            ref = face_ref.get("ref")
-            if isinstance(ref, str):
-                refs.append({"ref": ref, "shell_id": shell_id})
-
-    return refs
+    return [
+        {"ref": face_id, "shell_id": shell_id}
+        for shell_id, shell in shell_map.items()
+        for face_id in shell["faces"]
+    ]
 
 
 def from_csdm_json(data: dict[str, Any]) -> TopologyData:
@@ -484,7 +602,7 @@ def from_csdm_json(data: dict[str, Any]) -> TopologyData:
         "surfaces": _build_surfaces(data, ring_map),
         "solids": _build_solids(data, shell_map),
         "observation_curves": _build_observation_curves(data),
-        "surface_shell_face_refs": _build_surface_shell_face_refs(data),
+        "surface_shell_face_refs": _build_surface_shell_face_refs(shell_map),
     }
 
 
@@ -515,36 +633,6 @@ def _ring_members_from_raw(raw_members: Any) -> list[RingMember]:
         )
 
     return members
-
-
-def _shell_faces_from_raw(
-    raw_face_refs: Any,
-) -> tuple[list[str], dict[str, Orientation]]:
-    """Convert raw shell face references into typed face ids and orientations."""
-    faces: list[str] = []
-    face_orientations: dict[str, Orientation] = {}
-
-    if not isinstance(raw_face_refs, list):
-        return faces, face_orientations
-
-    for raw_face_ref in raw_face_refs:
-        if not isinstance(raw_face_ref, dict):
-            continue
-
-        face_id = raw_face_ref.get("ref")
-        raw_orientation = raw_face_ref.get("orientation", "+")
-
-        if not isinstance(face_id, str):
-            continue
-
-        orientation: Orientation = (
-            raw_orientation if raw_orientation in {"+", "-"} else "+"
-        )
-
-        faces.append(face_id)
-        face_orientations[face_id] = orientation
-
-    return faces, face_orientations
 
 
 def _string_or_none(value: Any) -> str | None:
