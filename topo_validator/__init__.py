@@ -25,10 +25,15 @@ from .model import (
     has_error,
 )
 
-# TopoValidatorPlugin is imported and re-exported at module top level so a
-# consuming register's bblocks-config.yaml can discover it via a bare
-# `modules: [topo_validator]` entry -- see
-# https://ogcincubator.github.io/bblocks-docs/create/validation#validator-plugins
+# TopoValidatorPlugin is re-exported here for library/programmatic use, but
+# that does NOT make it discoverable via a bare `modules: [topo_validator]`
+# entry in a consuming register's bblocks-config.yaml: the postprocessor's
+# plugin harness (_plugin_harness.py:_validator_classes) only accepts classes
+# whose __module__ equals the declared module's own name, which excludes
+# classes merely imported into __init__.py's namespace -- the class keeps the
+# __module__ of where it's actually defined (topo_validator.plugin). A
+# consuming register must declare `modules: [topo_validator.plugin]` instead.
+# See https://ogcincubator.github.io/bblocks-docs/create/validation#validator-plugins
 from .plugin import TopoValidatorPlugin
 
 from .rdf_loader import from_rdf_graph
