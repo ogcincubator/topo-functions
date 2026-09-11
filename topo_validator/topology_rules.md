@@ -32,7 +32,7 @@ Shells must be watertight, with the surfaces oriented outwards. Intersection of 
 There must be no volume overlap.
 This ensures valid topology for volume computation.
 
-**2D data.** All rules below assume 3D coordinates. A dataset whose points are all valid 2D `[x, y]` pairs (no z) is not run through these rules at all — `validate_topology()` records a single `NO_3D_TOPOLOGY` warning and skips the conformance classes, rather than failing structurally. Dedicated 2D/2.5D topology rules (row 32 below) are a possible future extension, not yet implemented.
+**2D data.** All rules below assume 3D coordinates. A dataset whose points are all valid 2D `[x, y]` pairs (no z) is not run through these rules at all — `validate_topology()` records a single `NO_3D_TOPOLOGY` warning and skips the conformance classes, rather than failing structurally. Dedicated 2D/2.5D topology rules (row 34 below) are a possible future extension, not yet implemented.
 
 ## 3D CSDM Topology Rules: Test-Oriented Summary
 
@@ -60,24 +60,26 @@ Rules marked **✅ TR-##** have a corresponding validator function and unit test
 | 18 |                              | No shell gaps or overlaps        | Shell surfaces must meet perfectly                                                                                                                                                                      | ✅ TR-06                                               |
 | 19 |                              | No dangling faces                | Every face must participate in at least one shell                                                                                                                                                       | ✅ TR-18                                               |
 | 20 |                              | Two faces per edge               | Each shell edge shared by exactly two faces                                                                                                                                                             | ✅ TR-06                                               |
-| 21 | **Solid Rules**              | Closed solid                     | Solid must be bounded by closed shell(s)                                                                                                                                                                | ✅ TR-06                                               |
-| 22 |                              | Solid non self-intersection      | Solids must not intersect themselves                                                                                                                                                                    | ✅ TR-24                                               |
-| 23 |                              | Positive volume                  | Solid must have non-zero volume                                                                                                                                                                         | ✅ TR-07                                               |
-| 24 |                              | Minimum thickness                | Avoid sliver solids (thin AABB in any axis)                                                                                                                                                             | ✅ TR-19                                               |
-| 25 |                              | Shell orientation                | Outer shell outward, inner shells inward                                                                                                                                                                | ✅ TR-25                                               |
-| 26 | **Solid Relationship Rules** | Shared boundary consistency      | Adjacent solids share a common face                                                                                                                                                                     | ✅ TR-10                                               |
-| 27 |                              | Face adjacency limit             | Face adjacent to at most one neighbour solid                                                                                                                                                            | ✅ TR-10                                               |
-| 28 |                              | No overlapping solids            | Solids shall not overlap                                                                                                                                                                                | ✅ TR-08                                               |
-| 29 | **Containment Rules**        | Parent-child containment         | Child parcel bbox must lie within parent parcel bbox - Solid Primary Parcels only                                                                                                                       | ✅ TR-09: partially implemented, need to add type test |
-| 30 |                              | Secondary Parcel containment     | Secondary Parcel must lie within their burdened parcel(s)                                                                                                                                               | ✅ TR-20                                               |
-| 31 |                              | Thematic host relationship       | Thematic solids must reference a valid host parcel                                                                                                                                                      | ✅ TR-21                                               |
-| 32 | **2D / 2.5D Parcels**        | Primary Parcel Coverage          | Primary parcels of the same type must not overlap in 2D / 2.5D space.</br>Where they are intended to form a continuous parcel fabric, they must also be contiguous, with no unintended gaps or slivers. | ? Partially implemented                               |
+| 21 |                              | Shell closure                    | Every shell must be a closed, consistently oriented (watertight) surface                                                                                                                                | ✅ TR-27                                               |
+| 22 | **Solid Rules**              | Closed solid                     | Solid must be bounded by closed shell(s)                                                                                                                                                                | ✅ TR-06                                               |
+| 23 |                              | Solid non self-intersection      | Solids must not intersect themselves                                                                                                                                                                    | ✅ TR-24                                               |
+| 24 |                              | Positive volume                  | Solid must have non-zero volume                                                                                                                                                                         | ✅ TR-07                                               |
+| 25 |                              | Minimum thickness                | Avoid sliver solids (thin AABB in any axis)                                                                                                                                                             | ✅ TR-19                                               |
+| 26 |                              | Shell orientation                | Outer shell outward, inner shells inward                                                                                                                                                                | ✅ TR-25                                               |
+| 27 |                              | Declared volume consistency      | A solid's declared volume must match the volume its own topology encloses                                                                                                                              | ✅ TR-26                                               |
+| 28 | **Solid Relationship Rules** | Shared boundary consistency      | Adjacent solids share a common face                                                                                                                                                                     | ✅ TR-10                                               |
+| 29 |                              | Face adjacency limit             | Face adjacent to at most one neighbour solid                                                                                                                                                            | ✅ TR-10                                               |
+| 30 |                              | No overlapping solids            | Solids shall not overlap                                                                                                                                                                                | ✅ TR-08                                               |
+| 31 | **Containment Rules**        | Parent-child containment         | Child parcel bbox must lie within parent parcel bbox - Solid Primary Parcels only                                                                                                                       | ✅ TR-09: partially implemented, need to add type test |
+| 32 |                              | Secondary Parcel containment     | Secondary Parcel must lie within their burdened parcel(s)                                                                                                                                               | ✅ TR-20                                               |
+| 33 |                              | Thematic host relationship       | Thematic solids must reference a valid host parcel                                                                                                                                                      | ✅ TR-21                                               |
+| 34 | **2D / 2.5D Parcels**        | Primary Parcel Coverage          | Primary parcels of the same type must not overlap in 2D / 2.5D space.</br>Where they are intended to form a continuous parcel fabric, they must also be contiguous, with no unintended gaps or slivers. | ? Partially implemented                               |
 
 ---
 
 ## Implemented Rules — Detail
 
-The following twenty-five rules are fully implemented in `validator.py` and tested in `test_validator.py`.
+The following twenty-seven rules are fully implemented in `validator.py` and tested in `test_validator.py`.
 
 ### Point Rules
 
@@ -210,6 +212,15 @@ The shell of a solid must be a closed 2-manifold.
 In a closed shell every curve is used by the solid's faces exactly twice (once in each direction).  
 A count other than 2 means the shell has a gap or a hole.
 
+#### TR-27 — ShellClosure
+**Function:** `validate_shell_closure(data)`
+**Error code:** `SHELL_NOT_CLOSED`
+Every shell must be a closed, consistently oriented surface.
+Applies the divergence theorem to a constant field: the oriented area vectors of a closed, consistently wound surface sum to zero, so a non-zero residual is either the area of a hole or the area of a region double-covered by a reversed face.
+The residual is compared against a tolerance relative to the shell's own total surface area (`1e-6`), with an absolute floor (`1e-9`) so a tiny shell isn't held to a bound below double precision.
+This rule closes a gap left by the other shell/solid rules: `TR-06` counts curve references without regard to direction, so two faces walking a shared edge the *same* way still satisfy it; `TR-25` tests only the *sign* of the volume integral and `TR-26` only its *magnitude* — both presume closure, so an open shell reaches them as a strange number rather than as a closure error. A solid with two coplanar faces of opposing normals can pass all of TR-06/TR-25/TR-26 while enclosing nothing well-defined; TR-27 is what catches that case (e.g. a reversed face surviving a modelling tool's own "solid" check, which validates edge counts rather than consistent face orientation).
+Runs before the CC-05 volume rules, since neither TR-25's sign nor TR-26's magnitude means anything over a surface with a hole in it.
+
 ---
 
 ### Solid Rules
@@ -237,6 +248,15 @@ Note: the current data model does not distinguish inner shells (voids) from the 
 This test applies to geometries intended to represent a closed solid shell.
 In the 3D CSDM, boundary faces are orientable, and orientation carries topological meaning because it distinguishes the inward/outward role of the face relative to connected solids.
 The signed-volume check is an implementation method for testing whether the shell orientation is consistent; it is not itself the source of the topological concept.
+
+#### TR-26 — DeclaredVolumeConsistency
+**Function:** `validate_declared_volume_matches_topology(data)`
+**Error code:** `DECLARED_VOLUME_MISMATCH`
+A solid's declared volume must match the volume its own topology encloses.
+The declared value is typically derived by the producer from published face areas and face normals via the divergence theorem's z-integral; this rule independently recomputes the enclosed volume from the points and rings alone (summing each shell's *signed* volume before taking the absolute value, so a void's negative contribution correctly subtracts from the outer shell's), so an error in any of the underlying geometry inputs shows up as a mismatch rather than cancelling out.
+Solids whose topology encloses no volume are skipped — their geometry is degenerate/unusable and other rules in this class (`TR-07`, `TR-24`, `TR-25`) report that instead.
+The tolerance is relative (`0.2%` of the enclosed volume) for solids large enough that coordinate rounding is negligible, with an absolute floor (`0.02` m³) for small solids — rounding of published coordinates perturbs the integral by an amount set by the solid's own dimensions, not by its volume, so a purely relative bound would be unreasonably tight on a small solid.
+This rule is distinct from `TR-07` (which only checks that the declared volume is positive) and `TR-25` (which checks only the *sign*, not the magnitude, of the volume integral).
 
 ---
 
@@ -343,7 +363,7 @@ Core validation module.  Each TR-xx rule is a standalone function that accepts t
 {"code": str, "severity": "error"|"warning", "message": str,
  "object_id": str|None, "path": str|None, "extra": dict}
 ```
-The top-level entry point `validate_topology(data, tol={})` runs all twenty-five rules and returns the combined issue list.
+The top-level entry point `validate_topology(data, tol={})` runs all twenty-seven rules and returns the combined issue list.
 Optional tolerance overrides: `"point"` (TR-01), `"volume"` (TR-07), `"length"` (TR-12), `"thickness"` (TR-19).
 
 **Key geometry helper — `_segments_intersect_3d`**

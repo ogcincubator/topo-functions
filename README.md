@@ -359,8 +359,8 @@ topo2geojson -i arc_by_center.json -t referenced-objects.ttl -m edges,faces --de
 | `CC-01`            | Point topology                | `TR-01`, `TR-11`                                     |
 | `CC-02`            | Curve topology                | `TR-02`, `TR-03`, `TR-12`, `TR-13`, `TR-14`, `TR-22` |
 | `CC-03`            | Surface topology              | `TR-04`, `TR-05`, `TR-15`, `TR-16`, `TR-17`, `TR-23` |
-| `CC-04`            | Shell topology                 | `TR-06`, `TR-18`                                     |
-| `CC-05`            | Solid topology                 | `TR-07`, `TR-19`, `TR-24`, `TR-25`                   |
+| `CC-04`            | Shell topology                 | `TR-06`, `TR-18`, `TR-27`                            |
+| `CC-05`            | Solid topology                 | `TR-07`, `TR-19`, `TR-24`, `TR-25`, `TR-26`          |
 | `CC-06`            | Solid relationship topology    | `TR-08`, `TR-10`                                     |
 | `CC-07`            | Containment and host topology  | `TR-09`, `TR-20`, `TR-21`                            |
 
