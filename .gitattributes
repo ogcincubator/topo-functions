@@ -1,0 +1,17 @@
+# Normalise text files to LF.
+# This is particularly important because the OGC Blocks tooling
+# is normally executed in a POSIX/WSL environment.
+* text=auto eol=lf
+
+# Windows command scripts, if any, retain Windows line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Explicit binary files.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
