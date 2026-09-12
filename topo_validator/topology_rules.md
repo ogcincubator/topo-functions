@@ -434,7 +434,7 @@ Pytest fixtures and topology builders.
 - **`--fixture <filename>`** CLI option — selects a JSON geometry fixture file for the `TestFixture` class (default: `tetrahedron.json`).
 
 ### `test_validator.py`
-111 unit tests across 27 classes.  Each implemented rule has at least one valid (happy-path) test and one invalid (violation-injection) test.
+171 unit tests across 34 classes (independently counted against the current file — the "111 tests across 27 classes" figure this line previously carried was already stale even in its own upstream source). Each implemented rule has at least one valid (happy-path) test and one invalid (violation-injection) test. Two classes are cross-cutting rather than per-rule and so aren't in the table below: `TestToleranceParity` and `TestReportRuleCoverage` (the latter asserts every conformance class's `RULE_IDS` has a matching `report.py` row and vice versa — the check that would have caught TR-27 briefly missing from `RULE_CHECKS`, and the same class of gap this package's own Stage 8 work found and fixed for TR-28/TR-29).
 
 | Class                                  | Rule           | Tests |
 |----------------------------------------|----------------|-------|
@@ -463,11 +463,16 @@ Pytest fixtures and topology builders.
 | `TestTR23ConnectedInterior`            | TR-23          | 4     |
 | `TestTR24SolidNonSelfIntersection`     | TR-24          | 4     |
 | `TestTR25ShellOrientation`             | TR-25          | 4     |
+| `TestTR26DeclaredVolumeConsistency`    | TR-26          | 1     |
+| `TestTR27ShellClosure`                 | TR-27          | 10    |
+| `TestTR27PackageEngineAgreement`       | TR-27          | 8     |
+| `TestVolumeIntegralLocalOrigin`        | TR-25/26/27    | 4     |
 | `TestIntegration`                      | All            | 4     |
-| `TestFixture`                          | All (via JSON) | 26    |
+| `TestFixture`                          | All (via JSON) | 27    |
 
-`TestFixture` covers all 25 rules individually (TR-01 through TR-25) plus one combined `test_fixture_passes_all_tr_rules` test.
+`TestFixture` covers all 27 rules individually (TR-01 through TR-27) plus one combined `test_fixture_passes_all_tr_rules` test.
 `TestTR14` includes a dedicated skew-segment test (`test_skew_curves_at_different_elevations_pass`) that confirms the 3D intersection upgrade does not generate false positives for curves on separate building levels.
+`TestTR27PackageEngineAgreement` imports this package's own `conformance`/`report` modules directly, so the independent validator and this package's engine are cross-checked against each other, not just against a fixture. TR-28/TR-29 (this package's declared parcel-relationship rules — see the Containment Rules section above) have not yet been ported to this independent suite; there is no `TestTR28`/`TestTR29` class here yet.
 
 ---
 
