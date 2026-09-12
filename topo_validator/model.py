@@ -42,6 +42,11 @@ Orientation = Literal["+", "-"]
 ShellType = Literal["outer", "inner"]
 Coordinate3D = list[float]
 
+# Per-point dimensionality classification -- "2d" is exactly [x, y], "3d" is
+# [x, y, z, ...] (three or more numeric values), "invalid" is anything else.
+# See `point_dimensionality` below.
+PointDimensionality = Literal["2d", "3d", "invalid"]
+
 
 class Issue(TypedDict):
     """Validation issue returned by topology rule checks."""
@@ -330,3 +335,62 @@ def solid_owned_curve_ids(data: TopologyData) -> set[str]:
             for member in ring.get("members", []):
                 owned.add(member["ref"])
     return owned
+
+
+# ---------------------------------------------------------------------------
+# Mixed 2D/3D dataset support (vocabulary only -- not yet wired in)
+# ---------------------------------------------------------------------------
+#
+# `point_dimensionality` and `MIXED_DIMENSION_CURVE_CODE` are the shared
+# vocabulary for an upcoming per-point 2D/3D partitioning pass: a dataset may
+# legitimately mix 3D topology with 2D content (e.g. a cadastral parcel
+# outline) that should be excluded from 3D conformance checks rather than
+# rejected outright. Neither is used anywhere yet -- `validate_structure`
+# still classifies a dataset as uniformly 2D or 3D via
+# `points_are_all_two_dimensional`, and no rule emits
+# `MIXED_DIMENSION_CURVE_CODE`. They exist now so the eventual partitioning
+# module has settled names to build against instead of inventing them ad hoc.
+
+# Reserved for a curve whose vertices resolve to a mix of 2D and 3D points --
+# a genuine defect (unlike a curve whose vertices are consistently 2D, which
+# is legitimate 2D content), not yet detected by any rule.
+MIXED_DIMENSION_CURVE_CODE = "MIXED_DIMENSION_CURVE"
+
+
+def point_dimensionality(point: Any) -> PointDimensionality:
+    """Classify one point's coordinate dimensionality.
+
+    Args:
+        point: A candidate point record (typically a `Point`, but accepted as
+            `Any` so callers can classify a raw, not-yet-validated dict).
+
+    Returns:
+        "2d" for an exact [x, y] numeric pair, "3d" for [x, y, z, ...] (three
+        or more numeric values), or "invalid" for anything else -- wrong
+        length, non-numeric values, or a missing/malformed "coordinates"
+        field.
+
+    Unlike `points_are_all_two_dimensional` (validator.py), which classifies
+    an entire dataset as uniformly 2D or not, this classifies one point at a
+    time -- the building block a future mixed-dataset partitioning pass needs,
+    since today's all-or-nothing check cannot tell a legitimate 2D point in a
+    mostly-3D dataset apart from a genuinely malformed one.
+    """
+    if not isinstance(point, dict):
+        return "invalid"
+
+    coordinates = point.get("coordinates")
+    if not isinstance(coordinates, list):
+        return "invalid"
+
+    if not all(
+        isinstance(value, int | float) and not isinstance(value, bool)
+        for value in coordinates
+    ):
+        return "invalid"
+
+    if len(coordinates) == 2:
+        return "2d"
+    if len(coordinates) >= 3:
+        return "3d"
+    return "invalid"
