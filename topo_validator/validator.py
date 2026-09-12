@@ -1011,4 +1011,27 @@ def validate_topology(
         if progress is not None:
             progress(f"Completed {class_label} ({len(class_issues)} issue(s))")
 
+    if not selected or "CC-07" in selected:
+        from .conformance.cc07_containment import (
+            validate_declared_easement_burden,
+            validate_declared_parcel_containment,
+        )
+
+        if progress is not None:
+            progress("Running CC-07 declared parcel-relationship checks (TR-28/TR-29)")
+
+        parcel_relationship_issues = validate_declared_parcel_containment(
+            topology_3d, topology_2d
+        )
+        parcel_relationship_issues.extend(
+            validate_declared_easement_burden(topology_3d, topology_2d)
+        )
+        issues.extend(parcel_relationship_issues)
+
+        if progress is not None:
+            progress(
+                "Completed CC-07 declared parcel-relationship checks "
+                f"({len(parcel_relationship_issues)} issue(s))"
+            )
+
     return issues

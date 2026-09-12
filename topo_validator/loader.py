@@ -13,6 +13,7 @@ from .model import (
     ObservationCurve,
     Orientation,
     Point,
+    Relationship,
     Ring,
     RingMember,
     Shell,
@@ -340,6 +341,16 @@ def _build_parcel_surfaces(
     `Polygon`-typed topology, or without a usable references list are
     skipped.
 
+    A built surface also carries `feature_type`, copied from its parcel
+    FeatureCollection's own `featureType` (e.g. `"PrimaryParcel"`) rather
+    than from the feature itself -- CSDM carries the type at the collection
+    level, the same place `_iter_features`'s `excluded_feature_types` reads
+    it from. This is a plain, un-prefixed string (e.g. `"PrimaryParcel"`,
+    not a qname like `"surv:PrimaryParcel"`), matching how `featureType` is
+    written everywhere else in a CSDM document; a declared relationship's
+    `targetFeatureType` is expected to match this exactly (see
+    `conformance.cc07_containment`).
+
     Args:
         data: Parsed Topo Feature / 3D CSDM JSON object.
         curves: Curve records already built from `data["edges"]`, keyed by
@@ -352,35 +363,52 @@ def _build_parcel_surfaces(
     """
     surfaces: list[Surface] = []
 
-    for feature in _iter_features(data, "parcels"):
-        feature_id = feature.get("id")
-        if not isinstance(feature_id, str):
+    for collection in data.get("parcels", []):
+        if not isinstance(collection, dict):
             continue
 
-        topology = feature.get("topology")
-        if not isinstance(topology, dict) or topology.get("type") != "Polygon":
+        feature_type = collection.get("featureType")
+        features = collection.get("features", [])
+        if not isinstance(features, list):
             continue
 
-        raw_rings = topology.get("references")
-        if not isinstance(raw_rings, list):
-            continue
-
-        rings: list[Ring] = []
-        for curve_ids in raw_rings:
-            if not isinstance(curve_ids, list) or not all(
-                isinstance(curve_id, str) for curve_id in curve_ids
-            ):
+        for feature in features:
+            if not isinstance(feature, dict):
                 continue
 
-            rings.append(
-                {
-                    "type": "outer" if not rings else "inner",
-                    "members": _chain_ring_curve_orientations(curve_ids, curves),
-                }
-            )
+            feature_id = feature.get("id")
+            if not isinstance(feature_id, str):
+                continue
 
-        if rings:
-            surfaces.append({"id": feature_id, "rings": rings})
+            topology = feature.get("topology")
+            if not isinstance(topology, dict) or topology.get("type") != "Polygon":
+                continue
+
+            raw_rings = topology.get("references")
+            if not isinstance(raw_rings, list):
+                continue
+
+            rings: list[Ring] = []
+            for curve_ids in raw_rings:
+                if not isinstance(curve_ids, list) or not all(
+                    isinstance(curve_id, str) for curve_id in curve_ids
+                ):
+                    continue
+
+                rings.append(
+                    {
+                        "type": "outer" if not rings else "inner",
+                        "members": _chain_ring_curve_orientations(curve_ids, curves),
+                    }
+                )
+
+            if not rings:
+                continue
+
+            surface: Surface = {"id": feature_id, "rings": rings}
+            if isinstance(feature_type, str):
+                surface["feature_type"] = feature_type
+            surfaces.append(surface)
 
     return surfaces
 
@@ -588,6 +616,49 @@ def _resolve_solid_shells(
     return shells, flattened_face_ids, flattened_face_orientations
 
 
+def _build_relationships(feature: dict[str, Any]) -> list[Relationship]:
+    """Build declared relationship records from a feature's `topology.relationships`.
+
+    The `topo-feature` topology datatype schema already defines
+    `relationships` on the `topology` object, constrained to `rel: "topology"`
+    (`bblocks://ogc.geo.json-fg.link-role`) -- `_topology_list` reads it the
+    same generic way it reads `references`/`directed_references`. Entries
+    with any other `rel`, or missing a string `href`/`role`/
+    `targetFeatureType`, are skipped.
+
+    Args:
+        feature: A raw CSDM feature (e.g. a `solids` collection entry).
+
+    Returns:
+        Declared relationship records.
+    """
+    relationships: list[Relationship] = []
+
+    for raw in _topology_list(feature, "relationships"):
+        if not isinstance(raw, dict) or raw.get("rel") != "topology":
+            continue
+
+        href = raw.get("href")
+        role = raw.get("role")
+        target_feature_type = raw.get("targetFeatureType")
+
+        if not isinstance(href, str) or not isinstance(role, str):
+            continue
+        if not isinstance(target_feature_type, str):
+            continue
+
+        relationships.append(
+            {
+                "href": href,
+                "rel": "topology",
+                "role": role,
+                "targetFeatureType": target_feature_type,
+            }
+        )
+
+    return relationships
+
+
 def _build_solids(data: dict[str, Any], shell_map: dict[str, Shell]) -> list[Solid]:
     """Build internal solid records from CSDM solid FeatureCollections.
 
@@ -648,6 +719,7 @@ def _build_solids(data: dict[str, Any], shell_map: dict[str, Shell]) -> list[Sol
             "burdened_id": _string_or_none(solid_properties.get("burdened_id")),
             "servient_id": _string_or_none(solid_properties.get("servient_id")),
             "host_id": _string_or_none(solid_properties.get("host_id")),
+            "relationships": _build_relationships(feature),
         }
         solids.append(solid)
 

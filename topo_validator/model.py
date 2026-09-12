@@ -92,6 +92,7 @@ class Surface(TypedDict):
 
     id: str
     rings: list[Ring]
+    feature_type: NotRequired[str]
 
 
 class Shell(TypedDict):
@@ -100,6 +101,22 @@ class Shell(TypedDict):
     type: ShellType
     faces: list[str]
     face_orientations: dict[str, Orientation]
+
+
+class Relationship(TypedDict):
+    """Declared `topology.relationships` entry on a solid.
+
+    Per the OGC JSON-FG link-role shape (`bblocks://ogc.geo.json-fg.link-role`)
+    that the `topo-feature` topology datatype schema already defines
+    `relationships` as -- `rel` is expected to be the literal string
+    "topology"; entries with any other `rel` are not parsed into this shape
+    (see `loader._build_relationships`).
+    """
+
+    href: str
+    rel: str
+    role: str
+    targetFeatureType: str
 
 
 class Solid(TypedDict):
@@ -117,6 +134,7 @@ class Solid(TypedDict):
     burdened_id: NotRequired[str | None]
     host_id: str | None
     levels: list[str]
+    relationships: NotRequired[list[Relationship]]
 
 
 class ObservationCurve(TypedDict):
