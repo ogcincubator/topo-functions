@@ -27,7 +27,6 @@ RELATIONSHIP_ID_FIELDS = ("parent_id", "servient_id", "burdened_id", "host_id")
 SHELL_TYPES = {"outer", "inner"}
 
 TWO_D_COORDINATE_LENGTH = 2
-THREE_D_COORDINATE_LENGTH = 3
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +179,7 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
             )
         )
 
-    issues.extend(_validate_points_structure(
-        data["points"],
-        minimum_coordinate_length=TWO_D_COORDINATE_LENGTH if two_dimensional else THREE_D_COORDINATE_LENGTH,
-    ))
+    issues.extend(_validate_points_structure(data["points"]))
     issues.extend(_validate_curves_structure(data["curves"]))
     issues.extend(_validate_surfaces_structure(data["surfaces"]))
     issues.extend(_validate_solids_structure(data["solids"]))
@@ -236,17 +232,19 @@ def points_are_all_two_dimensional(points: Any) -> bool:
 
 def _validate_points_structure(
     points: list[dict[str, Any]],
-    *,
-    minimum_coordinate_length: int = THREE_D_COORDINATE_LENGTH,
 ) -> list[Issue]:
     """Validate point coordinate structure.
 
+    Each point is checked independently against a floor of
+    `TWO_D_COORDINATE_LENGTH`: a 2D point ([x, y]) and a 3D point
+    ([x, y, z, ...]) are both structurally valid regardless of what the rest
+    of the dataset looks like, so a dataset mixing 2D content (e.g. a
+    cadastral parcel outline) with 3D topology does not have every 2D point
+    rejected merely because the rest of the dataset is 3D. Only a shorter
+    (0- or 1-value) coordinates list is a structural error.
+
     Args:
         points: Point records to validate.
-        minimum_coordinate_length: Minimum coordinate list length to accept.
-            Callers pass 2 for an all-2D dataset (see
-            `points_are_all_two_dimensional`), so 2D points aren't flagged as
-            structurally invalid merely for lacking a z value.
     """
     issues: list[Issue] = []
 
@@ -256,12 +254,12 @@ def _validate_points_structure(
         coordinates = point.get("coordinates")
         object_id = point.get("id")
 
-        if not isinstance(coordinates, list) or len(coordinates) < minimum_coordinate_length:
+        if not isinstance(coordinates, list) or len(coordinates) < TWO_D_COORDINATE_LENGTH:
             issues.append(
                 err(
                     "INVALID_COORDINATES",
                     f"{coordinates_path} must be a list with at least "
-                    f"{minimum_coordinate_length} numbers",
+                    f"{TWO_D_COORDINATE_LENGTH} numbers",
                     object_id=object_id,
                     path=coordinates_path,
                 )
@@ -770,6 +768,56 @@ def _validate_surface_shell_face_refs_structure(
 # ---------------------------------------------------------------------------
 
 
+EXCLUDED_FROM_3D_VALIDATION_CODE = "EXCLUDED_FROM_3D_VALIDATION"
+
+
+def _excluded_from_3d_validation_issue(category: str, excluded_ids: list[str]) -> Issue:
+    """Build a summarized, non-silent notice for one excluded-from-3D category.
+
+    One issue per category (not per id) mirrors the existing single-line
+    NO_3D_TOPOLOGY warning rather than reproducing a wall of near-identical
+    per-id lines; full traceability lives in `extra.excluded_ids`.
+    """
+    return warn(
+        EXCLUDED_FROM_3D_VALIDATION_CODE,
+        f"{len(excluded_ids)} {category} excluded from 3D topology validation "
+        f"because they are 2D; 2D-specific validation is not yet implemented "
+        f"for {category}.",
+        extra={
+            "category": category,
+            "count": len(excluded_ids),
+            "excluded_ids": excluded_ids,
+        },
+    )
+
+
+def _dimensionality_exclusion_issues(
+    topology_2d: TopologyData,
+    excluded_solid_ids: set[str],
+) -> list[Issue]:
+    """Build one exclusion issue per non-empty 2D-excluded category.
+
+    Args:
+        topology_2d: The 2D-only view returned by
+            `dimensionality.partition_topology`.
+        excluded_solid_ids: Ids of solids removed from the 3D view because
+            they own at least one 2D-tainted face. Solids never appear in
+            `topology_2d` itself -- see `dimensionality`'s module docstring.
+    """
+    categories = (
+        ("points", [point["id"] for point in topology_2d.get("points", [])]),
+        ("curves", [curve["id"] for curve in topology_2d.get("curves", [])]),
+        ("surfaces", [surface["id"] for surface in topology_2d.get("surfaces", [])]),
+        ("solids", sorted(excluded_solid_ids)),
+    )
+
+    return [
+        _excluded_from_3d_validation_issue(category, excluded_ids)
+        for category, excluded_ids in categories
+        if excluded_ids
+    ]
+
+
 def validate_topology(
     data: Mapping[str, Any],
     tol: dict[str, float] | Tolerances | None = None,
@@ -831,8 +879,28 @@ def validate_topology(
         return issues
 
     from .conformance import CONFORMANCE_CLASSES
+    from .dimensionality import partition_topology
 
     topology = cast(TopologyData, cast(object, data))
+
+    if progress is not None:
+        progress("Running mixed 2D/3D dimensionality partitioning")
+
+    topology_3d, topology_2d, dimensionality_issues = partition_topology(topology)
+    issues.extend(dimensionality_issues)
+
+    excluded_solid_ids = {
+        solid["id"] for solid in topology.get("solids", [])
+    } - {solid["id"] for solid in topology_3d.get("solids", [])}
+    exclusion_issues = _dimensionality_exclusion_issues(topology_2d, excluded_solid_ids)
+    issues.extend(exclusion_issues)
+
+    if progress is not None:
+        progress(
+            "Completed dimensionality partitioning "
+            f"({len(dimensionality_issues) + len(exclusion_issues)} issue(s))"
+        )
+
     selected = set(conformance_classes or [])
 
     for cc in CONFORMANCE_CLASSES:
@@ -844,7 +912,7 @@ def validate_topology(
         if progress is not None:
             progress(f"Running {class_label}")
 
-        class_issues = cc.validate(topology, tolerances=t)
+        class_issues = cc.validate(topology_3d, tolerances=t)
         issues.extend(class_issues)
 
         if progress is not None:

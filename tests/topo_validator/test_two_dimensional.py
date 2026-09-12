@@ -1,8 +1,11 @@
 """Tests for 2D-dataset handling: validating a dataset whose points are all
 2D (no z) must not fail -- it should produce a single NO_3D_TOPOLOGY warning
 and skip the 3D-only conformance classes, per the documented "2D validation
-is not yet implemented" contract. A dataset that's genuinely malformed (not
-just 2D) must still fail as before.
+is not yet implemented" contract. A dataset mixing legitimately 2D and 3D
+points is likewise not a structural error -- each point is checked against
+its own minimum of 2 coordinate values, not one dataset-wide length. A
+dataset that's genuinely malformed (a point with fewer than 2 coordinate
+values, or non-numeric ones) must still fail as before.
 """
 
 from topo_validator.model import errors_only
@@ -79,16 +82,18 @@ def test_all_2d_dataset_validate_topology_passes_and_skips_conformance_classes()
     assert not any(m.startswith("Running CC-") for m in progress_messages)
 
 
-def test_mixed_2d_and_3d_points_still_fails_structurally():
-    """A points collection that isn't consistently 2D (some points do have a
-    z, one doesn't) is a real structural inconsistency, not "this is a 2D
-    dataset" -- it must still be flagged as before."""
+def test_mixed_2d_and_3d_points_no_longer_fails_structurally():
+    """A points collection mixing a legitimately 2D point and a legitimately
+    3D point (e.g. a 2D parcel outline alongside 3D building topology) is not
+    a structural error: each point is validated against its own minimum of 2
+    coordinate values, not a single dataset-wide length chosen from whether
+    the whole collection happens to be uniformly 2D. Whether 2D content is
+    later excluded from 3D-specific conformance checks is a separate,
+    downstream concern (see `topo_validator.dimensionality`) -- this only
+    confirms it is no longer rejected at the structural stage."""
     issues = validate_structure(MIXED_TOPOLOGY)
 
-    errors = errors_only(issues)
-    assert len(errors) == 1
-    assert errors[0]["code"] == "INVALID_COORDINATES"
-    assert errors[0]["object_id"] == "p1"
+    assert errors_only(issues) == []
 
 
 def test_malformed_single_value_coordinates_still_fails_structurally():
