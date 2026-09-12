@@ -241,6 +241,150 @@ def _build_surfaces(data: dict[str, Any], ring_map: dict[str, Ring]) -> list[Sur
     return surfaces
 
 
+def _curve_endpoints(curve_id: str, curves: dict[str, Curve]) -> tuple[str, str] | None:
+    """Return a curve's (start, end) vertex ids, or None if unresolvable."""
+    curve = curves.get(curve_id)
+    vertices = curve.get("vertices") if isinstance(curve, dict) else None
+
+    if not isinstance(vertices, list) or len(vertices) < 2:
+        return None
+
+    return vertices[0], vertices[-1]
+
+
+def _chain_ring_curve_orientations(
+    curve_ids: list[str],
+    curves: dict[str, Curve],
+) -> list[RingMember]:
+    """Infer each curve's directed orientation by chaining *curve_ids*.
+
+    A `parcels` ring (unlike a `faces` ring) lists its boundary as plain
+    curve ids with no explicit per-curve orientation, and -- unlike a
+    `faces` ring -- not necessarily in walk order (a boundary's curves can be
+    listed in property-definition order rather than traversal order). This
+    matches each curve's endpoints against *either* end of the chain built so
+    far, mirroring `topo2geojson._chain_edges`'s four-way matching strategy
+    exactly, but at the id level: it accumulates directed `RingMember`
+    entries and a parallel vertex-id chain instead of resolved coordinates.
+
+    A curve that's missing, has fewer than two vertices, or connects to
+    neither end of the chain built so far still gets an entry (appended,
+    defaulting to "+") rather than being dropped -- this is a best-effort
+    structural build; a resulting non-closed or inconsistent ring is
+    `validator`'s TR-04 (SurfaceClosedRing) and related rules' job to
+    diagnose, not this function's.
+
+    Args:
+        curve_ids: Curve ids forming one ring, as given by a `parcels`
+            feature's `topology.references`.
+        curves: Curve records already built from `data["edges"]`, keyed by id.
+
+    Returns:
+        Directed ring members, one per input curve id.
+    """
+    members: list[RingMember] = []
+    vertex_chain: list[str] = []
+
+    for curve_id in curve_ids:
+        endpoints = _curve_endpoints(curve_id, curves)
+
+        if endpoints is None:
+            members.append({"ref": curve_id, "orientation": "+"})
+            continue
+
+        start_vertex, end_vertex = endpoints
+
+        if not vertex_chain:
+            members.append({"ref": curve_id, "orientation": "+"})
+            vertex_chain = [start_vertex, end_vertex]
+            continue
+
+        if start_vertex == vertex_chain[-1]:
+            members.append({"ref": curve_id, "orientation": "+"})
+            vertex_chain.append(end_vertex)
+        elif end_vertex == vertex_chain[-1]:
+            members.append({"ref": curve_id, "orientation": "-"})
+            vertex_chain.append(start_vertex)
+        elif end_vertex == vertex_chain[0]:
+            members.insert(0, {"ref": curve_id, "orientation": "+"})
+            vertex_chain.insert(0, start_vertex)
+        elif start_vertex == vertex_chain[0]:
+            members.insert(0, {"ref": curve_id, "orientation": "-"})
+            vertex_chain.insert(0, end_vertex)
+        else:
+            # Connects to neither end of the chain built so far.
+            members.append({"ref": curve_id, "orientation": "+"})
+            vertex_chain.append(end_vertex)
+
+    return members
+
+
+def _build_parcel_surfaces(
+    data: dict[str, Any],
+    curves: dict[str, Curve],
+) -> list[Surface]:
+    """Build internal surface records from CSDM parcel FeatureCollections.
+
+    A `parcels` feature with `topology.type == "Polygon"` describes its
+    boundary as one or more rings of ordered edge/curve ids -- a different
+    shape from a `faces` feature's `RingMember`-with-explicit-orientation
+    references -- so each ring's per-curve orientation is inferred by
+    chaining consecutive curve endpoints (see
+    `_chain_ring_curve_orientations`), mirroring how `topo2geojson` resolves
+    the same reference shape into geometry, but at the id level to build a
+    structural `Ring` instead.
+
+    Scoped to `Polygon`; `AggregatePolygon` (combining several already-built
+    parcel polygons into one MultiPolygon, per `topo2geojson`'s handling) is
+    not supported here. Parcel features without a string "id", without a
+    `Polygon`-typed topology, or without a usable references list are
+    skipped.
+
+    Args:
+        data: Parsed Topo Feature / 3D CSDM JSON object.
+        curves: Curve records already built from `data["edges"]`, keyed by
+            id -- a parcel ring's curve ids resolve against these, since a
+            parcel's edges are ordinary `edges` collection features.
+
+    Returns:
+        Surface records, one per `Polygon`-typed parcel feature with at
+        least one usable ring.
+    """
+    surfaces: list[Surface] = []
+
+    for feature in _iter_features(data, "parcels"):
+        feature_id = feature.get("id")
+        if not isinstance(feature_id, str):
+            continue
+
+        topology = feature.get("topology")
+        if not isinstance(topology, dict) or topology.get("type") != "Polygon":
+            continue
+
+        raw_rings = topology.get("references")
+        if not isinstance(raw_rings, list):
+            continue
+
+        rings: list[Ring] = []
+        for curve_ids in raw_rings:
+            if not isinstance(curve_ids, list) or not all(
+                isinstance(curve_id, str) for curve_id in curve_ids
+            ):
+                continue
+
+            rings.append(
+                {
+                    "type": "outer" if not rings else "inner",
+                    "members": _chain_ring_curve_orientations(curve_ids, curves),
+                }
+            )
+
+        if rings:
+            surfaces.append({"id": feature_id, "rings": rings})
+
+    return surfaces
+
+
 def _feature_ids(data: dict[str, Any], collection_name: str) -> set[str]:
     """Return the set of feature ids declared in a CSDM collection."""
     return {
@@ -595,11 +739,13 @@ def from_csdm_json(data: dict[str, Any]) -> TopologyData:
     """
     ring_map = _build_ring_map(data)
     shell_map = _build_shell_map(data)
+    curves = _build_curves(data)
+    curve_map = {curve["id"]: curve for curve in curves}
 
     return {
         "points": _build_points(data),
-        "curves": _build_curves(data),
-        "surfaces": _build_surfaces(data, ring_map),
+        "curves": curves,
+        "surfaces": _build_surfaces(data, ring_map) + _build_parcel_surfaces(data, curve_map),
         "solids": _build_solids(data, shell_map),
         "observation_curves": _build_observation_curves(data),
         "surface_shell_face_refs": _build_surface_shell_face_refs(shell_map),

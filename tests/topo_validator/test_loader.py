@@ -370,7 +370,7 @@ def test_derived_solid_fixture_exempts_the_ground_reference_surface():
     assert not solid_faces & set(GROUND_SURFACE_FACES)
 
 
-def test_derived_solid_fixture_reports_only_its_declared_volume_defect():
+def test_derived_solid_fixture_reports_its_declared_volume_defect():
     """The fixture's published volume disagrees with its own geometry.
 
     The solid is a vertical offset of the ground surface -- upper faces at
@@ -380,14 +380,24 @@ def test_derived_solid_fixture_reports_only_its_declared_volume_defect():
     fixture declares 11143.208 (an implied offset of 13.768), so TR-26 reports
     the mismatch.
 
-    Every other rule passes, and the integral is translation-invariant, which
-    together pin the discrepancy on the declared value rather than on the
-    topology or the rule.
+    The integral is translation-invariant, which pins the discrepancy on the
+    declared value rather than on the topology or the rule.
+
+    The fixture's `parcels` collection separately declares three
+    PrimaryParcel polygons that all trace the same four edges and are not
+    referenced by the solid. `from_csdm_json` now parses `parcels` into real
+    surfaces (see `loader._build_parcel_surfaces`), so this also produces
+    DUPLICATE_SURFACE/DANGLING_FACE findings -- a genuine, pre-existing
+    property of this fixture's parcel data, unrelated to the declared-volume
+    defect this test is about; this test only asserts that the specific
+    DECLARED_VOLUME_MISMATCH finding is present and correct, not that it is
+    the only issue.
     """
     data = from_csdm_json(load_json(DERIVED_SOLID_FIXTURE))
 
     issues = validate_topology(data)
 
-    assert [issue["code"] for issue in issues] == ["DECLARED_VOLUME_MISMATCH"]
-    assert issues[0]["extra"]["declared_volume"] == 11143.208
-    assert round(issues[0]["extra"]["topology_volume"], 1) == 11330.8
+    volume_issues = [i for i in issues if i["code"] == "DECLARED_VOLUME_MISMATCH"]
+    assert len(volume_issues) == 1
+    assert volume_issues[0]["extra"]["declared_volume"] == 11143.208
+    assert round(volume_issues[0]["extra"]["topology_volume"], 1) == 11330.8
