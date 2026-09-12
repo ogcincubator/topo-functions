@@ -821,6 +821,30 @@ def _tag_as_2d(issues: list[Issue]) -> list[Issue]:
     return issues
 
 
+def _pad_2d_points_to_3d(topology_2d: TopologyData) -> TopologyData:
+    """Return a shallow copy of *topology_2d* with every point padded to (x, y, 0.0).
+
+    The shared 3D segment-intersection helper (`geometry.segments_intersect_3d`
+    and its `vec_sub`/`vec_cross`/`vec_dot` primitives) hard-indexes a third
+    coordinate. Every point in `topology_2d` is 2D by construction (see
+    `dimensionality.partition_topology`), so padding every point onto a common
+    z=0 plane is exact, not an approximation: a curve or ring living entirely
+    at z=0 self-intersects (or doesn't) identically to its unpadded 2D
+    projection. `curves` and `surfaces` reference points by id and are
+    returned unchanged.
+
+    Only used internally for the three rules that reach the 3D helper
+    (`TR-02`/`TR-14`/`TR-15`); their issue messages and `extra` fields
+    reference object ids and segment indices, never raw coordinates, so the
+    padding never surfaces in reported output.
+    """
+    padded_points = [
+        {**point, "coordinates": [point["coordinates"][0], point["coordinates"][1], 0.0]}
+        for point in topology_2d.get("points", [])
+    ]
+    return {**topology_2d, "points": padded_points}
+
+
 def _run_2d_applicable_rules(
     topology_2d: TopologyData,
     tolerances: Tolerances,
@@ -828,15 +852,16 @@ def _run_2d_applicable_rules(
     """Run the 2D-applicable subset of point/curve/surface rules against the
     2D-only view produced by `dimensionality.partition_topology`.
 
-    Only rules that are purely referential, or use coordinate math that
-    degrades correctly for consistently-2D input, are reused here -- and
-    `topology_2d` never mixes 2D and 3D points, so the pairwise-distance
-    checks (TR-01, TR-12) never hit the length-mismatch case that would make
-    reusing them unsafe. TR-02 (CurveNoSelfIntersection), TR-14
-    (CurveIntersectionAtNodesOnly), and TR-15 (NoSurfaceSelfIntersection) all
-    call the shared 3D segment-intersection helper, which hard-indexes a
-    third coordinate -- those need z-padding first and are deliberately not
-    included here.
+    Most rules here are purely referential, or use coordinate math that
+    degrades correctly for consistently-2D input -- `topology_2d` never mixes
+    2D and 3D points, so the pairwise-distance checks (TR-01, TR-12) never
+    hit the length-mismatch case that would make reusing them unsafe.
+
+    TR-02 (CurveNoSelfIntersection), TR-14 (CurveIntersectionAtNodesOnly), and
+    TR-15 (NoSurfaceSelfIntersection) all call the shared 3D
+    segment-intersection helper, which hard-indexes a third coordinate; these
+    three are run against a z=0-padded copy of `topology_2d` (see
+    `_pad_2d_points_to_3d`) rather than `topology_2d` itself.
 
     Every returned issue is tagged `extra.dimensionality = "2d"`.
     """
@@ -845,6 +870,8 @@ def _run_2d_applicable_rules(
         validate_unique_points,
     )
     from .conformance.cc02_curves import (
+        validate_curve_intersection_at_nodes_only,
+        validate_curve_no_self_intersection,
         validate_curve_orientation,
         validate_minimum_curve_length,
         validate_no_dangling_curves,
@@ -852,6 +879,7 @@ def _run_2d_applicable_rules(
     )
     from .conformance.cc03_surfaces import (
         validate_no_duplicate_surfaces,
+        validate_no_surface_self_intersection,
         validate_shared_surface_edges,
         validate_surface_closed_rings,
         validate_surface_connected_interior,
@@ -872,6 +900,11 @@ def _run_2d_applicable_rules(
     issues.extend(validate_no_duplicate_surfaces(topology_2d))
     issues.extend(validate_surface_curve_consistency(topology_2d))
     issues.extend(validate_surface_connected_interior(topology_2d))
+
+    padded_topology_2d = _pad_2d_points_to_3d(topology_2d)
+    issues.extend(validate_curve_no_self_intersection(padded_topology_2d))
+    issues.extend(validate_curve_intersection_at_nodes_only(padded_topology_2d))
+    issues.extend(validate_no_surface_self_intersection(padded_topology_2d))
 
     return _tag_as_2d(issues)
 
