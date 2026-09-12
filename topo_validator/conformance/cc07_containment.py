@@ -63,6 +63,8 @@ SOLID_NOT_WITHIN_BURDENED_PARCEL_CODE = "SOLID_NOT_WITHIN_BURDENED_PARCEL"
 
 UNKNOWN_PARCEL_REFERENCE_CODE = "UNKNOWN_PARCEL_REFERENCE"
 PARCEL_TYPE_MISMATCH_CODE = "PARCEL_TYPE_MISMATCH"
+UNKNOWN_BURDENED_PARCEL_REFERENCE_CODE = "UNKNOWN_BURDENED_PARCEL_REFERENCE"
+BURDENED_PARCEL_TYPE_MISMATCH_CODE = "BURDENED_PARCEL_TYPE_MISMATCH"
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +519,8 @@ def _resolve_and_check_parcel_relationship(
     parcel_surfaces: dict[str, Surface],
     topology_3d_indexes: dict,
     topology_2d_indexes: dict,
+    unknown_code: str,
+    type_mismatch_code: str,
     not_within_code: str,
 ) -> Issue | None:
     """Resolve a declared relationship's target and check geometric containment.
@@ -531,7 +535,7 @@ def _resolve_and_check_parcel_relationship(
     parcel = parcel_surfaces.get(href)
     if parcel is None:
         return err(
-            UNKNOWN_PARCEL_REFERENCE_CODE,
+            unknown_code,
             f"Solid {solid_id} references unknown parcel {href!r}",
             object_id=solid_id,
             extra={"href": href},
@@ -541,7 +545,7 @@ def _resolve_and_check_parcel_relationship(
     actual_type = parcel.get("feature_type")
     if declared_type != actual_type:
         return err(
-            PARCEL_TYPE_MISMATCH_CODE,
+            type_mismatch_code,
             f"Solid {solid_id}'s declared relationship to {href!r} expects "
             f"targetFeatureType {declared_type!r}, but that feature's actual "
             f"type is {actual_type!r}",
@@ -583,6 +587,8 @@ def _validate_declared_parcel_relationship(
     role: str,
     missing_code: str,
     multiple_code: str,
+    unknown_code: str,
+    type_mismatch_code: str,
     not_within_code: str,
 ) -> list[Issue]:
     """Shared implementation for TR-28 and TR-29.
@@ -597,7 +603,18 @@ def _validate_declared_parcel_relationship(
             of.
         missing_code: Issue code for a missing declaration.
         multiple_code: Issue code for more than one declaration.
+        unknown_code: Issue code for a declared `href` that resolves to no
+            known parcel surface.
+        type_mismatch_code: Issue code for a declared `targetFeatureType`
+            that doesn't match the resolved parcel's actual type.
         not_within_code: Issue code for a footprint outside the parcel.
+
+    `unknown_code`/`type_mismatch_code` are passed in rather than shared
+    module constants because a solid with `parcel_type == "secondary"` is
+    legitimately checked by both TR-28 and TR-29 (`PARCEL_LIKE_TYPES` and
+    `SECONDARY_PARCEL_TYPES` both include "secondary") -- a code shared
+    between the two rules would make both rows in a report's rule-results
+    table show FAIL whenever only one rule's check actually fired.
     """
     parcel_surfaces = _parcel_surfaces_by_id(topology_2d)
     if not parcel_surfaces:
@@ -626,6 +643,8 @@ def _validate_declared_parcel_relationship(
             parcel_surfaces,
             topology_3d_indexes,
             topology_2d_indexes,
+            unknown_code,
+            type_mismatch_code,
             not_within_code,
         )
         if issue is not None:
@@ -655,6 +674,8 @@ def validate_declared_parcel_containment(
         CONTAINING_PRIMARY_PARCEL_ROLE,
         MISSING_PARCEL_CONTAINMENT_RELATIONSHIP_CODE,
         MULTIPLE_PARCEL_CONTAINMENT_RELATIONSHIPS_CODE,
+        UNKNOWN_PARCEL_REFERENCE_CODE,
+        PARCEL_TYPE_MISMATCH_CODE,
         SOLID_NOT_WITHIN_DECLARED_PARCEL_CODE,
     )
 
@@ -681,6 +702,8 @@ def validate_declared_easement_burden(
         BURDENED_BY_SECONDARY_PARCEL_ROLE,
         MISSING_EASEMENT_BURDEN_RELATIONSHIP_CODE,
         MULTIPLE_EASEMENT_BURDEN_RELATIONSHIPS_CODE,
+        UNKNOWN_BURDENED_PARCEL_REFERENCE_CODE,
+        BURDENED_PARCEL_TYPE_MISMATCH_CODE,
         SOLID_NOT_WITHIN_BURDENED_PARCEL_CODE,
     )
 
