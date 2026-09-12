@@ -791,31 +791,89 @@ def _excluded_from_3d_validation_issue(category: str, excluded_ids: list[str]) -
     )
 
 
-def _dimensionality_exclusion_issues(
-    topology_2d: TopologyData,
-    excluded_solid_ids: set[str],
-) -> list[Issue]:
-    """Build one exclusion issue per non-empty 2D-excluded category.
+def _dimensionality_exclusion_issues(excluded_solid_ids: set[str]) -> list[Issue]:
+    """Build a summarized, non-silent notice for solids excluded from 3D validation.
+
+    Points, curves, and surfaces routed into the 2D view are validated by
+    `_run_2d_applicable_rules` instead of being blanket-excluded. Solids have
+    no 2D analogue in any rule -- TR-06/07/18/19/24/25/26/27 are inherently
+    volumetric -- so they are the only category this notice still covers.
 
     Args:
-        topology_2d: The 2D-only view returned by
-            `dimensionality.partition_topology`.
         excluded_solid_ids: Ids of solids removed from the 3D view because
             they own at least one 2D-tainted face. Solids never appear in
             `topology_2d` itself -- see `dimensionality`'s module docstring.
     """
-    categories = (
-        ("points", [point["id"] for point in topology_2d.get("points", [])]),
-        ("curves", [curve["id"] for curve in topology_2d.get("curves", [])]),
-        ("surfaces", [surface["id"] for surface in topology_2d.get("surfaces", [])]),
-        ("solids", sorted(excluded_solid_ids)),
+    if not excluded_solid_ids:
+        return []
+
+    return [_excluded_from_3d_validation_issue("solids", sorted(excluded_solid_ids))]
+
+
+def _tag_as_2d(issues: list[Issue]) -> list[Issue]:
+    """Return *issues* with `extra.dimensionality` set to "2d".
+
+    Lets a report distinguish a 2D-view finding under a TR-xx code from an
+    identical-looking 3D-view finding under the same code.
+    """
+    for issue in issues:
+        issue["extra"] = {**issue.get("extra", {}), "dimensionality": "2d"}
+    return issues
+
+
+def _run_2d_applicable_rules(
+    topology_2d: TopologyData,
+    tolerances: Tolerances,
+) -> list[Issue]:
+    """Run the 2D-applicable subset of point/curve/surface rules against the
+    2D-only view produced by `dimensionality.partition_topology`.
+
+    Only rules that are purely referential, or use coordinate math that
+    degrades correctly for consistently-2D input, are reused here -- and
+    `topology_2d` never mixes 2D and 3D points, so the pairwise-distance
+    checks (TR-01, TR-12) never hit the length-mismatch case that would make
+    reusing them unsafe. TR-02 (CurveNoSelfIntersection), TR-14
+    (CurveIntersectionAtNodesOnly), and TR-15 (NoSurfaceSelfIntersection) all
+    call the shared 3D segment-intersection helper, which hard-indexes a
+    third coordinate -- those need z-padding first and are deliberately not
+    included here.
+
+    Every returned issue is tagged `extra.dimensionality = "2d"`.
+    """
+    from .conformance.cc01_points import (
+        validate_point_fabric_consistency,
+        validate_unique_points,
+    )
+    from .conformance.cc02_curves import (
+        validate_curve_orientation,
+        validate_minimum_curve_length,
+        validate_no_dangling_curves,
+        validate_no_duplicate_curves,
+    )
+    from .conformance.cc03_surfaces import (
+        validate_no_duplicate_surfaces,
+        validate_shared_surface_edges,
+        validate_surface_closed_rings,
+        validate_surface_connected_interior,
+        validate_surface_curve_consistency,
     )
 
-    return [
-        _excluded_from_3d_validation_issue(category, excluded_ids)
-        for category, excluded_ids in categories
-        if excluded_ids
-    ]
+    issues: list[Issue] = []
+    issues.extend(validate_unique_points(topology_2d, tol=tolerances.point))
+    issues.extend(validate_point_fabric_consistency(topology_2d))
+    issues.extend(validate_no_dangling_curves(topology_2d))
+    issues.extend(
+        validate_minimum_curve_length(topology_2d, min_length=tolerances.length)
+    )
+    issues.extend(validate_no_duplicate_curves(topology_2d))
+    issues.extend(validate_curve_orientation(topology_2d))
+    issues.extend(validate_surface_closed_rings(topology_2d))
+    issues.extend(validate_shared_surface_edges(topology_2d))
+    issues.extend(validate_no_duplicate_surfaces(topology_2d))
+    issues.extend(validate_surface_curve_consistency(topology_2d))
+    issues.extend(validate_surface_connected_interior(topology_2d))
+
+    return _tag_as_2d(issues)
 
 
 def validate_topology(
@@ -892,13 +950,16 @@ def validate_topology(
     excluded_solid_ids = {
         solid["id"] for solid in topology.get("solids", [])
     } - {solid["id"] for solid in topology_3d.get("solids", [])}
-    exclusion_issues = _dimensionality_exclusion_issues(topology_2d, excluded_solid_ids)
+    exclusion_issues = _dimensionality_exclusion_issues(excluded_solid_ids)
     issues.extend(exclusion_issues)
+
+    two_dimensional_rule_issues = _run_2d_applicable_rules(topology_2d, t)
+    issues.extend(two_dimensional_rule_issues)
 
     if progress is not None:
         progress(
-            "Completed dimensionality partitioning "
-            f"({len(dimensionality_issues) + len(exclusion_issues)} issue(s))"
+            "Completed dimensionality partitioning and 2D-applicable rules "
+            f"({len(dimensionality_issues) + len(exclusion_issues) + len(two_dimensional_rule_issues)} issue(s))"
         )
 
     selected = set(conformance_classes or [])
