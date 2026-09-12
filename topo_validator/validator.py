@@ -173,8 +173,9 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
             warn(
                 "NO_3D_TOPOLOGY",
                 "All points have 2D coordinates; no 3D topology found. "
-                "3D topology conformance checks were skipped. 2D validation "
-                "is not yet implemented.",
+                "3D-specific conformance checks (shell/solid/volume rules) do "
+                "not apply; the 2D-applicable point/curve/surface rules were "
+                "run instead.",
                 path="points",
             )
         )
@@ -960,15 +961,13 @@ def validate_topology(
             progress("Skipping topology conformance checks because structure errors were found")
         return issues
 
-    if points_are_all_two_dimensional(data.get("points")):
-        # Conformance-class rules assume 3D coordinates throughout (volume,
-        # thickness, 3D segment intersection, ...); running them against an
-        # all-2D dataset would either crash or produce meaningless results.
-        # validate_structure() already recorded the NO_3D_TOPOLOGY warning.
-        if progress is not None:
-            progress("Skipping topology conformance checks: no 3D topology found (2D data)")
-        return issues
-
+    # A pure-2D dataset is not special-cased here: `partition_topology` routes
+    # every point (and everything built from them) into `topology_2d`, so
+    # `topology_3d` simply ends up empty and the CC-01..07 loop below no-ops
+    # over it harmlessly. This is what makes a pure-2D dataset get the same
+    # real 2D-applicable rule coverage as the 2D remainder of a mixed
+    # dataset, instead of only ever producing the NO_3D_TOPOLOGY warning from
+    # validate_structure() above.
     from .conformance import CONFORMANCE_CLASSES
     from .dimensionality import partition_topology
 
