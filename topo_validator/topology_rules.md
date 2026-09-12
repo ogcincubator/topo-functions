@@ -32,7 +32,9 @@ Shells must be watertight, with the surfaces oriented outwards. Intersection of 
 There must be no volume overlap.
 This ensures valid topology for volume computation.
 
-**2D data.** All rules below assume 3D coordinates. A dataset whose points are all valid 2D `[x, y]` pairs (no z) is not run through these rules at all — `validate_topology()` records a single `NO_3D_TOPOLOGY` warning and skips the conformance classes, rather than failing structurally. Dedicated 2D/2.5D topology rules (row 34 below) are a possible future extension, not yet implemented.
+**2D data.** Most rules below assume 3D coordinates, but a dataset may legitimately mix 2D content (e.g. a cadastral parcel outline) with 3D topology, or be entirely 2D — neither is a structural failure. Structural validation checks each point against its own minimum of 2 coordinate values, not one dataset-wide length, so a 2D point is never rejected merely because the rest of the dataset is 3D (see `validator._validate_points_structure`). `topo_validator.dimensionality.partition_topology()` then splits the topology into a 3D-only view and a 2D-only view: a point, curve, or surface is 2D-tainted when every point it touches is 2D (a curve touching *both* a 2D and a 3D point is a genuine defect, reported as `MIXED_DIMENSION_CURVE`, not silently routed either way). The 3D-only view goes through the conformance classes below exactly as documented. The 2D-only view is validated by the same rules under the same codes wherever the underlying check is purely referential or degrades correctly for consistently-2D input — TR-01, TR-02, TR-03, TR-04, TR-05, TR-11, TR-12, TR-13, TR-14, TR-15, TR-16, TR-17, TR-22, TR-23 (`validator._run_2d_applicable_rules`) — with each resulting issue tagged `extra.dimensionality: "2d"` and rendered in its own report section, separate from the main pass/fail table. Shell/solid/volume-specific rules (TR-06 onward) have no 2D analogue; a solid excluded from 3D validation purely because it owns 2D-tainted geometry produces a summarized `EXCLUDED_FROM_3D_VALIDATION` notice instead of being silently dropped. A dataset whose points are *all* 2D gets this same treatment uniformly (plus a single `NO_3D_TOPOLOGY` warning) rather than a separate code path. Dedicated 2D/2.5D *parcel-fabric* coverage rules (row 36 below — primary-parcel overlap and contiguity, the 2D analogue of TR-08) remain a future extension, not yet implemented.
+
+A CSDM `parcels` collection (`topology.type: "Polygon"`) is parsed into a real `Surface`: its ring's ordered curve ids are chained into a closed, correctly-oriented ring by matching endpoints against either end of the chain built so far (`loader._chain_ring_curve_orientations`), the same way `topo2geojson._chain_edges` resolves the identical reference shape into geometry. This is what lets a parcel's own boundary be checked (TR-04 closed ring, TR-16 no duplicates, etc.) via the 2D-applicable rules above, rather than only ever appearing as an opaque collection of orphan points and curves.
 
 ## 3D CSDM Topology Rules: Test-Oriented Summary
 
@@ -73,13 +75,15 @@ Rules marked **✅ TR-##** have a corresponding validator function and unit test
 | 31 | **Containment Rules**        | Parent-child containment         | Child parcel bbox must lie within parent parcel bbox - Solid Primary Parcels only                                                                                                                       | ✅ TR-09: partially implemented, need to add type test |
 | 32 |                              | Secondary Parcel containment     | Secondary Parcel must lie within their burdened parcel(s)                                                                                                                                               | ✅ TR-20                                               |
 | 33 |                              | Thematic host relationship       | Thematic solids must reference a valid host parcel                                                                                                                                                      | ✅ TR-21                                               |
-| 34 | **2D / 2.5D Parcels**        | Primary Parcel Coverage          | Primary parcels of the same type must not overlap in 2D / 2.5D space.</br>Where they are intended to form a continuous parcel fabric, they must also be contiguous, with no unintended gaps or slivers. | ? Partially implemented                               |
+| 34 |                              | Declared parcel containment      | A cadastral parcel/spatial-unit solid must declare exactly one `containingPrimaryParcel` relationship to the Primary Parcel that contains it, cross-checked geometrically                                | ✅ TR-28                                               |
+| 35 |                              | Declared easement burden         | A secondary/easement solid must declare exactly one `burdenedBySecondaryParcel` relationship to the Primary Parcel it burdens, cross-checked geometrically                                                | ✅ TR-29                                               |
+| 36 | **2D / 2.5D Parcels**        | Primary Parcel Coverage          | Primary parcels of the same type must not overlap in 2D / 2.5D space.</br>Where they are intended to form a continuous parcel fabric, they must also be contiguous, with no unintended gaps or slivers. | ? Partially implemented                               |
 
 ---
 
 ## Implemented Rules — Detail
 
-The following twenty-seven rules are fully implemented in `validator.py` and tested in `test_validator.py`.
+The following twenty-nine rules are fully implemented (TR-28/TR-29 in `conformance/cc07_containment.py`, invoked directly by `validator.validate_topology` rather than via a conformance class's own `validate()` — see the 2D data note above and their own entries below for why) and tested in `test_validator.py`.
 
 ### Point Rules
 
@@ -318,6 +322,45 @@ Where one interest burdens multiple parcels, the preferred representation is to 
 Every thematic solid (`parcel_type == "thematic"`) must reference a valid host parcel solid via the `host_id` field.  
 The `host_id` must resolve to a known solid in the same dataset.
 
+#### TR-28 — DeclaredParcelContainment
+
+**Function:** `conformance.cc07_containment.validate_declared_parcel_containment(topology_3d, topology_2d)`
+
+**Error codes:** `MISSING_PARCEL_CONTAINMENT_RELATIONSHIP` (warning), `MULTIPLE_PARCEL_CONTAINMENT_RELATIONSHIPS`, `UNKNOWN_PARCEL_REFERENCE`, `PARCEL_TYPE_MISMATCH`, `SOLID_NOT_WITHIN_DECLARED_PARCEL`
+
+Implements the "explicit parent parcel relationships" proposal: rather than relying only on geometric containment (which can become ambiguous after geometry edits, tolerance changes, or topology repairs), a solid declares which Primary Parcel contains it. A solid whose `parcel_type` is `"primary"` or `"secondary"` must declare exactly one `topology.relationships` entry with `rel: "topology"` and `role: "containingPrimaryParcel"`:
+
+```json
+{
+  "topology": {
+    "relationships": [
+      {
+        "href": "uuid:...parcel-id...",
+        "rel": "topology",
+        "role": "containingPrimaryParcel",
+        "targetFeatureType": "PrimaryParcel"
+      }
+    ]
+  }
+}
+```
+
+The declaration is one-way (the solid declares it; the Primary Parcel does not declare a reciprocal relationship back) — the reverse index is derivable by querying which solids declare `containingPrimaryParcel` toward a given parcel, so there is only one place the fact can drift out of sync. `targetFeatureType` must match the referenced feature's actual `featureType` exactly (the plain string, e.g. `"PrimaryParcel"`, not a prefixed qname) — a mismatch is reported rather than resolved leniently, since a mismatch usually means the data itself disagrees with what it claims to reference.
+
+Once the declaration resolves, the solid's footprint (every distinct vertex bounding it, projected to (x, y)) must lie within the declared parcel's own ring, treated as an unlimited vertical prism (`topo_validator.parcel_geometry`).
+
+This rule is **conditionally scoped**, unlike every other rule in this document: it only activates when the dataset actually declares at least one `PrimaryParcel` surface (i.e. it has real `parcels` content — see the 2D data note above), and only for solids whose `parcel_type` marks them as cadastral parcel/spatial-unit geometry. A plain geometry fixture with no parcel content at all produces no findings from this rule, rather than every solid being flagged for a relationship it was never meant to declare. A missing declaration is a warning, not an error — there is no separate "strict" mode; a consumer wanting to treat it as a hard failure can do so from the issue list itself (via its severity), the same way any other warning-vs-error consumer decision is made elsewhere in this package.
+
+#### TR-29 — DeclaredEasementBurden
+
+**Function:** `conformance.cc07_containment.validate_declared_easement_burden(topology_3d, topology_2d)`
+
+**Error codes:** `MISSING_EASEMENT_BURDEN_RELATIONSHIP` (warning), `MULTIPLE_EASEMENT_BURDEN_RELATIONSHIPS`, `UNKNOWN_BURDENED_PARCEL_REFERENCE`, `BURDENED_PARCEL_TYPE_MISMATCH`, `SOLID_NOT_WITHIN_BURDENED_PARCEL`
+
+The same mechanism as TR-28, for the easement/secondary side of a relationship: a solid whose `parcel_type` is `"easement"` or `"secondary"` (the same set TR-20 uses) must declare exactly one `topology.relationships` entry with `role: "burdenedBySecondaryParcel"` pointing at the Primary Parcel it burdens, cross-checked geometrically the same way. This is fully additive to TR-20's existing `burdened_id`/`servient_id` (solid-to-solid) check — a solid can be validated by both, and a `parcel_type == "secondary"` solid is legitimately in scope for *both* TR-28 and TR-29 at once (it sits within some Primary Parcel physically and separately burdens one via an easement), which is why TR-29 has its own distinct `UNKNOWN_BURDENED_PARCEL_REFERENCE`/`BURDENED_PARCEL_TYPE_MISMATCH` codes rather than sharing TR-28's — a shared code would make both rules' rows in a report show FAIL whenever only one of them actually found something.
+
+TR-21 (thematic/host) has no declared-relationship equivalent yet — deferred.
+
 ---
 
 ## Data Model
@@ -363,7 +406,7 @@ Core validation module.  Each TR-xx rule is a standalone function that accepts t
 {"code": str, "severity": "error"|"warning", "message": str,
  "object_id": str|None, "path": str|None, "extra": dict}
 ```
-The top-level entry point `validate_topology(data, tol={})` runs all twenty-seven rules and returns the combined issue list.
+The top-level entry point `validate_topology(data, tol={})` runs all twenty-nine rules and returns the combined issue list.
 Optional tolerance overrides: `"point"` (TR-01), `"volume"` (TR-07), `"length"` (TR-12), `"thickness"` (TR-19).
 
 **Key geometry helper — `_segments_intersect_3d`**
@@ -430,11 +473,11 @@ Pytest fixtures and topology builders.
 
 ## Rules Not Yet Implemented
 
-The following rules from the full NGSC Delivery 1 specification are identified but not yet implemented in this POC:
+The following rules from the full NGSC Delivery 1 specification are identified but not yet implemented in this POC. Point/curve/surface-level 2D consistency for parcel content (duplicate points, dangling curves, closed rings, duplicate surfaces, etc.) *is* covered — see the "2D data" note near the top of this document — and a solid's declared relationship to its containing/burdened Primary Parcel *is* covered (TR-28/TR-29); what remains below is specifically the 2D/2.5D *coverage* concept (whether a set of parcels tile a fabric correctly), which has no rule-reuse shortcut and needs real 2D polygon-overlap geometry:
 
 | Rule                             | Description                                                                                                                   | Notes                                          |
 |----------------------------------|-------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------|
 | Surface form constraint          | Surfaces must meet model-specific form rules                                                                                  | Dataset-specific; out of scope for generic POC |
 | No duplicate shells              | Shells must not be duplicated                                                                                                 | Implementation pending                         |
-| No gaps / no overlaps in Parcels | Primary parcels of the same type must not overlap in 2D / 2.5D space.                                                         | Implementation pending                         |  
+| No gaps / no overlaps in Parcels | Primary parcels of the same type must not overlap in 2D / 2.5D space.                                                         | The 2D analogue of TR-08; needs real 2D polygon-overlap geometry, not achievable via the padding/reuse tricks the other 2D-applicable rules use |
 | Parcels must be Contiguous       | Where they are intended to form a continuous parcel fabric, they must also be contiguous, with no unintended gaps or slivers. | Implementation pending                         |
