@@ -1,7 +1,7 @@
 # WA 3D CSDM Topology Rules
 
 The following is a summary of Section 4 Topology Rules extracted from NGSC Delivery 1, normalised into common topology rule names with short descriptions.
-The summary forms the designing basis for a set of proof-of-concept tests implemented in `validator.py`, `test_validator.py`, and `conftest.py`.
+The summary forms the basis for the rule implementations in `topo_validator/validator.py` and `topo_validator/conformance/`, exercised by the tests under `tests/topo_validator/` in this repository.
 
 ## Terminology
 
@@ -85,7 +85,7 @@ Rules marked **✅ TR-##** have a corresponding validator function and unit test
 
 ## Implemented Rules — Detail
 
-The following twenty-nine rules are fully implemented (TR-28/TR-29 in `conformance/cc07_containment.py`, invoked directly by `validator.validate_topology` rather than via a conformance class's own `validate()` — see the 2D data note above and their own entries below for why) and tested in `test_validator.py`.
+The following twenty-nine rules are fully implemented (TR-28/TR-29 in `conformance/cc07_containment.py`, invoked directly by `validator.validate_topology` rather than via a conformance class's own `validate()` — see the 2D data note above and their own entries below for why) and tested under `tests/topo_validator/` in this repository.
 
 ### Point Rules
 
@@ -402,18 +402,20 @@ Topology JSON fixtures in the CSDM geometry schema (using `edges`/`faces`/`solid
 
 ## Test Infrastructure
 
-### `validator.py`
-Core validation module.  Each TR-xx rule is a standalone function that accepts the topology dict and returns a list of issue dicts:
+This section describes only files and modules that exist in this repository. It intentionally does not carry a hand-maintained per-rule test-count table — that has drifted from reality before (twice) and the fix is to read it from the suite itself, not to re-derive a third static number: run `pytest tests/topo_validator/` for the current count, or `pytest tests/topo_validator/ --collect-only` for the current list of test files and functions.
+
+### `topo_validator/validator.py` and `topo_validator/conformance/`
+`validator.py` runs structural pre-checks, then dispatches to each conformance class's own `validate()` — one module per class, `topo_validator/conformance/cc01_points.py` through `cc07_containment.py` — plus TR-28/TR-29 (called directly; see the note under "Implemented Rules — Detail" above for why). Each TR-xx rule is a standalone function that accepts the topology dict and returns a list of issue dicts:
 ```python
 {"code": str, "severity": "error"|"warning", "message": str,
  "object_id": str|None, "path": str|None, "extra": dict}
 ```
-The top-level entry point `validate_topology(data, tol={})` runs all twenty-nine rules and returns the combined issue list.
+The top-level entry point `validate_topology(data, tol={})` (in `validator.py`) runs all twenty-nine rules and returns the combined issue list.
 Optional tolerance overrides: `"point"` (TR-01), `"volume"` (TR-07), `"length"` (TR-12), `"thickness"` (TR-19).
 
-**Key geometry helper — `_segments_intersect_3d`**
+**Key geometry helper — `segments_intersect_3d`** (`topo_validator/geometry.py`)
 
-Rules `TR-02`, `TR-14`, `TR-15`, and `TR-24` all rely on a shared 3D segment intersection test.
+Rules `TR-02`, `TR-14`, `TR-15`, and `TR-24` all rely on this shared 3D segment intersection test.
 
 The algorithm:
 
@@ -425,56 +427,16 @@ This is the critical step for 3D geometry: curves on separate building levels th
 3. **Parametric solve** — for coplanar segments, computes the intersection parameters `t` and `s` along each segment.  
 A proper interior crossing requires `0 < t < 1` and `0 < s < 1` (endpoints excluded).
 
-A 2D implementation (`_segments_intersect_2d`) projects all geometry onto the XY plane and could generate false positives for legitimate 3D topology such as boundaries on different levels.
-
-### `conftest.py`
-Pytest fixtures and topology builders.
+### `tests/topo_validator/conftest.py`
+Pytest fixtures and topology builders used by this repository's own test suite.
 
 - **`cube_data(prefix, x0,y0,z0, x1,y1,z1, **kwargs)`** — factory that constructs a topologically valid axis-aligned cube with mathematically verified outward-normal ring orientations.  Accepts `theme`, `parcel_type`, `parent_id`, `servient_id`, `host_id`, `levels`, and `volume`.
 - **`merge_datasets(*datasets)`** — combines multiple topology dicts into one, running a three-stage deduplication pipeline (points → curves → surfaces) that models the CSDM requirement that shared boundary elements are the same cadastral objects.
-- **Pytest fixtures:** `unit_cube`, `two_adjacent_cubes`, `nested_cubes`
-- **`--fixture <filename>`** CLI option — selects a JSON geometry fixture file for the `TestFixture` class (default: `tetrahedron.json`).
+- **Pytest fixtures:** `unit_cube`, `two_adjacent_cubes`, `nested_cubes`, `hollow_cube`.
+- **`fixture_data`/`--fixture <filename>`** — loads a JSON geometry fixture from `tests/topo_validator/fixtures/` (default: `tetrahedron.json`) via `topo_validator.loader.from_csdm_json`. Defined for fixture-driven tests but not currently consumed by any test class in this suite — a JSON fixture is instead loaded directly where needed (e.g. `tests/topo_validator/test_shared_surface_edges.py`).
 
-### `test_validator.py`
-171 unit tests across 34 classes (independently counted against the current file — the "111 tests across 27 classes" figure this line previously carried was already stale even in its own upstream source). Each implemented rule has at least one valid (happy-path) test and one invalid (violation-injection) test. Two classes are cross-cutting rather than per-rule and so aren't in the table below: `TestToleranceParity` and `TestReportRuleCoverage` (the latter asserts every conformance class's `RULE_IDS` has a matching `report.py` row and vice versa — the check that would have caught TR-27 briefly missing from `RULE_CHECKS`, and the same class of gap this package's own Stage 8 work found and fixed for TR-28/TR-29).
-
-| Class                                  | Rule           | Tests |
-|----------------------------------------|----------------|-------|
-| `TestTR01UniquePoints`                 | TR-01          | 4     |
-| `TestTR02CurveNoSelfIntersection`      | TR-02          | 3     |
-| `TestTR03NoDanglingCurves`             | TR-03          | 2     |
-| `TestTR04SurfaceClosedRing`            | TR-04          | 3     |
-| `TestTR05SharedSurfaceEdges`           | TR-05          | 2     |
-| `TestTR06ClosedSolid`                  | TR-06          | 3     |
-| `TestTR07PositiveVolume`               | TR-07          | 4     |
-| `TestTR08NoSolidOverlap`               | TR-08          | 4     |
-| `TestTR09ParentContainment`            | TR-09          | 4     |
-| `TestTR10SharedSolidFace`              | TR-10          | 3     |
-| `TestTR11PointFabricConsistency`       | TR-11          | 2     |
-| `TestTR12MinimumCurveLength`           | TR-12          | 3     |
-| `TestTR13NoDuplicateCurves`            | TR-13          | 3     |
-| `TestTR14CurveIntersectionAtNodesOnly` | TR-14          | 3     |
-| `TestTR15NoSurfaceSelfIntersection`    | TR-15          | 2     |
-| `TestTR16NoDuplicateSurfaces`          | TR-16          | 5     |
-| `TestTR17SurfaceCurveConsistency`      | TR-17          | 2     |
-| `TestTR18NoDanglingFaces`              | TR-18          | 2     |
-| `TestTR19MinimumSolidThickness`        | TR-19          | 3     |
-| `TestTR20EasementContainment`          | TR-20          | 4     |
-| `TestTR21ThematicHostRelationship`     | TR-21          | 4     |
-| `TestTR22CurveOrientation`             | TR-22          | 4     |
-| `TestTR23ConnectedInterior`            | TR-23          | 4     |
-| `TestTR24SolidNonSelfIntersection`     | TR-24          | 4     |
-| `TestTR25ShellOrientation`             | TR-25          | 4     |
-| `TestTR26DeclaredVolumeConsistency`    | TR-26          | 1     |
-| `TestTR27ShellClosure`                 | TR-27          | 10    |
-| `TestTR27PackageEngineAgreement`       | TR-27          | 8     |
-| `TestVolumeIntegralLocalOrigin`        | TR-25/26/27    | 4     |
-| `TestIntegration`                      | All            | 4     |
-| `TestFixture`                          | All (via JSON) | 27    |
-
-`TestFixture` covers all 27 rules individually (TR-01 through TR-27) plus one combined `test_fixture_passes_all_tr_rules` test.
-`TestTR14` includes a dedicated skew-segment test (`test_skew_curves_at_different_elevations_pass`) that confirms the 3D intersection upgrade does not generate false positives for curves on separate building levels.
-`TestTR27PackageEngineAgreement` imports this package's own `conformance`/`report` modules directly, so the independent validator and this package's engine are cross-checked against each other, not just against a fixture. TR-28/TR-29 (this package's declared parcel-relationship rules — see the Containment Rules section above) have not yet been ported to this independent suite; there is no `TestTR28`/`TestTR29` class here yet.
+### `tests/topo_validator/`
+This repository's test suite: `test_loader.py`, `test_plugin.py`, `test_rdf_loader.py`, `test_shared_surface_edges.py` (TR-05), `test_solid_overlap_parcel_types.py` (TR-08 parcel-type scoping), `test_transform_report_output.py`, `test_two_dimensional.py`, and `test_in_memory_samples.py` (runs the in-memory cube fixtures above through `validate_topology` end-to-end), plus the `tr0*-*-fail.json` regression fixtures under `fixtures/` for TR-01/02/03/04/11/12/13/14/22. Not every implemented rule yet has a dedicated regression test in this repository — treat this list as where a rule's tests would live, not a coverage guarantee; `pytest tests/topo_validator/` is authoritative for what currently exists and passes.
 
 ---
 
