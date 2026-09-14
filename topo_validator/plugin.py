@@ -21,6 +21,13 @@ convention (see `topo_validator.transform`, and `topo2geojson.run_transform`
 for the transformer-side equivalent) -- a validator plugin is applied per
 matching test resource across a whole register, receives a file path (not raw
 input_data), and returns pass/fail findings rather than a report document.
+
+`TopoValidatorPlugin.validate()` only returns `None` for a resource that
+isn't CSDM topology data at all (so it doesn't clutter reports for unrelated
+JSON test resources). Once a resource is recognized as topology data, it
+always reports something -- either the issues found, or an explicit
+"Validation passed" entry with a per-type feature count -- so a passing
+resource is never silently indistinguishable from one the plugin skipped.
 """
 
 from __future__ import annotations
@@ -28,13 +35,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .loader import from_csdm_json, load_json
+from .loader import CSDM_COLLECTION_KEYS, count_features, from_csdm_json, load_json
 from .merge import merge_topology
 from .model import Issue
 from .rdf_loader import from_rdf_graph
 from .validator import validate_topology
 
-_CSDM_COLLECTION_KEYS = ("points", "edges", "rings", "faces", "shells", "solids")
 _RDF_SUFFIXES = (".ttl", ".turtle", ".jsonld", ".json-ld")
 
 
@@ -45,7 +51,7 @@ def _looks_like_csdm_topology(data: Any) -> bool:
     resource in a register, most of which have nothing to do with topology
     -- this lets `validate()` return `None` (no findings) for those instead
     of raising or reporting spurious errors."""
-    return isinstance(data, dict) and any(key in data for key in _CSDM_COLLECTION_KEYS)
+    return isinstance(data, dict) and any(key in data for key in CSDM_COLLECTION_KEYS)
 
 
 def _rdf_validation_resource_paths(meta: Any) -> list[str]:
@@ -80,6 +86,22 @@ def _issue_entry(issue: Issue) -> dict[str, Any]:
     }
 
 
+def _pass_entry(counts: dict[str, int]) -> dict[str, Any]:
+    """Build the report entry for a topology with no validation issues.
+
+    Without this, `validate()` returns `None` on success and the plugin never
+    appears in the report for a passing resource -- indistinguishable from a
+    resource it silently skipped. Reporting an explicit pass, plus a per-type
+    feature count, confirms the plugin actually ran and shows what it saw.
+    """
+    counts_text = ", ".join(f"{key}: {count}" for key, count in counts.items())
+    return {
+        "message": f"Validation passed ({counts_text})",
+        "is_error": False,
+        "payload": {"counts": counts},
+    }
+
+
 class TopoValidatorPlugin:
     """OGC Building Blocks validator plugin for Topo Feature / 3D CSDM
     topology consistency."""
@@ -100,4 +122,7 @@ class TopoValidatorPlugin:
             topology = merge_topology(*rdf_topologies, topology)
 
         issues = validate_topology(topology)
-        return [_issue_entry(issue) for issue in issues] or None
+        if issues:
+            return [_issue_entry(issue) for issue in issues]
+
+        return [_pass_entry(count_features(data))]

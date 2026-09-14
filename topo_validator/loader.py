@@ -44,6 +44,9 @@ def load_json(path: str | Path) -> dict[str, Any]:
     return value
 
 
+CSDM_COLLECTION_KEYS = ("points", "edges", "rings", "faces", "shells", "solids")
+
+
 def _iter_features(
     data: dict[str, Any], collection_name: str
 ) -> Iterator[dict[str, Any]]:
@@ -59,6 +62,19 @@ def _iter_features(
         for feature in features:
             if isinstance(feature, dict):
                 yield feature
+
+
+def count_features(data: dict[str, Any]) -> dict[str, int]:
+    """Count Feature objects per Topo Feature / 3D CSDM collection key.
+
+    Args:
+        data: Parsed Topo Feature / 3D CSDM JSON object.
+
+    Returns:
+        Mapping of each of `CSDM_COLLECTION_KEYS` to the number of features
+        found under it (0 for keys the document doesn't use).
+    """
+    return {key: sum(1 for _ in _iter_features(data, key)) for key in CSDM_COLLECTION_KEYS}
 
 
 def _topology_list(feature: dict[str, Any], key: str) -> list[Any]:

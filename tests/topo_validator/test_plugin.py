@@ -11,6 +11,7 @@ from topo_validator.plugin import TopoValidatorPlugin
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 FAILING_FIXTURE = FIXTURES_DIR / "tr01-duplicate-point-fail.json"
+PASSING_FIXTURE = FIXTURES_DIR / "cube.json"
 
 
 def _meta(input_path: Path, validation_resources=None):
@@ -46,6 +47,25 @@ def test_validate_returns_error_entries_for_a_failing_fixture():
     assert any("DUPLICATE_POINT_PROXIMITY" in e["message"] for e in entries)
     assert all({"message", "is_error"} <= e.keys() for e in entries)
     assert all(isinstance(e["payload"], dict) for e in entries)
+
+
+def test_validate_reports_pass_with_object_counts_for_a_clean_fixture():
+    """A topology resource with no issues must not go silent: it should report
+    an explicit pass plus a per-type feature count, not None."""
+    plugin = TopoValidatorPlugin()
+    entries = plugin.validate(_meta(PASSING_FIXTURE))
+
+    assert entries is not None
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["is_error"] is False
+    assert "Validation passed" in entry["message"]
+    counts = entry["payload"]["counts"]
+    assert counts.keys() == {"points", "edges", "rings", "faces", "shells", "solids"}
+    assert all(isinstance(count, int) for count in counts.values())
+    assert counts["points"] > 0
+    assert counts["solids"] > 0
+    assert str(counts["points"]) in entry["message"]
 
 
 def test_validate_returns_none_for_non_topology_json(tmp_path):
