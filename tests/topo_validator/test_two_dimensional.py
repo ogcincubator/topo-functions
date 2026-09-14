@@ -1,8 +1,13 @@
 """Tests for 2D-dataset handling: validating a dataset whose points are all
-2D (no z) must not fail -- it should produce a single NO_3D_TOPOLOGY warning
-and skip the 3D-only conformance classes, per the documented "2D validation
-is not yet implemented" contract. A dataset that's genuinely malformed (not
-just 2D) must still fail as before.
+2D (no z) must not fail -- it should produce a single NO_3D_TOPOLOGY warning,
+and its content is validated by the 2D-applicable point/curve/surface rules
+(see `topo_validator.validator._run_2d_applicable_rules`) exactly as the 2D
+remainder of a mixed dataset would be; the 3D-only conformance classes still
+run, just over an empty 3D view, so they contribute nothing. A dataset mixing
+legitimately 2D and 3D points is likewise not a structural error -- each
+point is checked against its own minimum of 2 coordinate values, not one
+dataset-wide length. A dataset that's genuinely malformed (a point with fewer
+than 2 coordinate values, or non-numeric ones) must still fail as before.
 """
 
 from topo_validator.model import errors_only
@@ -69,26 +74,57 @@ def test_all_2d_dataset_produces_a_warning_not_an_error():
     assert issues[0]["severity"] == "warning"
 
 
-def test_all_2d_dataset_validate_topology_passes_and_skips_conformance_classes():
+def test_all_2d_dataset_validate_topology_passes_with_no_curves_or_surfaces():
+    """TWO_D_TOPOLOGY has no curves/surfaces/solids, so there is nothing for
+    the 2D-applicable rules to find fault with and nothing for the 3D
+    conformance classes to see either way -- the only issue is the
+    NO_3D_TOPOLOGY warning. The 3D conformance classes still run (over an
+    empty 3D view, per the "uniform" fix), so their progress messages appear
+    even though they contribute no issues."""
     progress_messages: list[str] = []
     issues = validate_topology(TWO_D_TOPOLOGY, progress=progress_messages.append)
 
     assert errors_only(issues) == []
     assert [i["code"] for i in issues] == ["NO_3D_TOPOLOGY"]
-    assert any("no 3D topology found" in m for m in progress_messages)
-    assert not any(m.startswith("Running CC-") for m in progress_messages)
+    assert any(m.startswith("Running CC-") for m in progress_messages)
 
 
-def test_mixed_2d_and_3d_points_still_fails_structurally():
-    """A points collection that isn't consistently 2D (some points do have a
-    z, one doesn't) is a real structural inconsistency, not "this is a 2D
-    dataset" -- it must still be flagged as before."""
+def test_all_2d_dataset_gets_real_2d_rule_coverage_not_just_a_warning():
+    """A pure-2D dataset with actual content is not just waved through with a
+    warning -- it gets the same real 2D-applicable rule coverage as the 2D
+    remainder of a mixed dataset would. Two coincident 2D points must still
+    trip TR-01 (DUPLICATE_POINT_PROXIMITY), exactly as it would for 3D
+    points."""
+    duplicate_2d_points = {
+        "points": [
+            {"id": "p1", "coordinates": [0.0, 0.0]},
+            {"id": "p2", "coordinates": [0.0, 0.0]},
+        ],
+        "curves": [],
+        "surfaces": [],
+        "solids": [],
+    }
+
+    issues = validate_topology(duplicate_2d_points)
+
+    codes = [i["code"] for i in issues]
+    assert "DUPLICATE_POINT_PROXIMITY" in codes
+    duplicate_issue = next(i for i in issues if i["code"] == "DUPLICATE_POINT_PROXIMITY")
+    assert duplicate_issue["extra"]["dimensionality"] == "2d"
+
+
+def test_mixed_2d_and_3d_points_no_longer_fails_structurally():
+    """A points collection mixing a legitimately 2D point and a legitimately
+    3D point (e.g. a 2D parcel outline alongside 3D building topology) is not
+    a structural error: each point is validated against its own minimum of 2
+    coordinate values, not a single dataset-wide length chosen from whether
+    the whole collection happens to be uniformly 2D. Whether 2D content is
+    later excluded from 3D-specific conformance checks is a separate,
+    downstream concern (see `topo_validator.dimensionality`) -- this only
+    confirms it is no longer rejected at the structural stage."""
     issues = validate_structure(MIXED_TOPOLOGY)
 
-    errors = errors_only(issues)
-    assert len(errors) == 1
-    assert errors[0]["code"] == "INVALID_COORDINATES"
-    assert errors[0]["object_id"] == "p1"
+    assert errors_only(issues) == []
 
 
 def test_malformed_single_value_coordinates_still_fails_structurally():

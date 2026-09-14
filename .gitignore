@@ -7,3 +7,8 @@ build/
 dist/
 *.egg-info/
 tests/output/bblock_debug/
+.agents
+skills-lock.json
+.mcp.json
+.claude/settings.local.json
+

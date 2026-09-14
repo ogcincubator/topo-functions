@@ -21,6 +21,7 @@ from ..model import (
     TopologyData,
     build_indexes,
     err,
+    solid_owned_curve_ids,
 )
 
 CONFORMANCE_CLASS_ID = "CC-02"
@@ -393,16 +394,37 @@ def validate_curve_intersection_at_nodes_only(
     A crossing between the *interiors* of two curve segments (not at a shared
     vertex endpoint) is flagged. Skew segments at different elevations are
     correctly identified as non-intersecting by the 3D coplanarity test.
+
+    Scope: solid-vs-surface pairs are exempt. A curve bounding a solid and a
+    curve used only by a surface-only face are allowed to cross, because a
+    surface-only face bounds no volume — ground surfaces, parcel footprints and
+    administrative planes pass through solid boundaries by design, so a
+    crossing between the two carries no topological meaning. Solid-vs-solid and
+    surface-vs-surface pairs remain fully checked.
+
+    Must stay in sync with the same rule in
+    src/tests/unit/wa_csdm_topology_rules/validator.py.
     """
     issues: list[Issue] = []
     points = build_indexes(data)["points"]
     curves = data.get("curves", [])
 
+    # Precomputed per-curve flag: the pair loop below is O(n^2), so ownership
+    # must not be a set lookup per pair.
+    owned_curve_ids = solid_owned_curve_ids(data)
+    is_solid_owned = [curve["id"] in owned_curve_ids for curve in curves]
+
     for first_index, first_curve in enumerate(curves):
         first_curve_id = first_curve["id"]
         first_segments = _curve_segments(first_curve.get("vertices", []))
 
-        for second_curve in curves[first_index + 1:]:
+        for second_offset, second_curve in enumerate(curves[first_index + 1:]):
+            # Out of scope: one curve bounds a solid, the other does not.
+            if is_solid_owned[first_index] != is_solid_owned[
+                first_index + 1 + second_offset
+            ]:
+                continue
+
             second_curve_id = second_curve["id"]
             second_segments = _curve_segments(second_curve.get("vertices", []))
 
@@ -450,7 +472,7 @@ def _curve_repeated_in_ring_issue(
     )
 
 
-def validate_no_repeated_curves_in_rings(
+def validate_curve_orientation(
     data: TopologyData,
 ) -> list[Issue]:
     """
@@ -515,5 +537,5 @@ def validate(data: TopologyData, tolerances: Tolerances | None = None) -> list[I
     issues.extend(validate_minimum_curve_length(data, min_length=t.length))
     issues.extend(validate_no_duplicate_curves(data))
     issues.extend(validate_curve_intersection_at_nodes_only(data))
-    issues.extend(validate_no_repeated_curves_in_rings(data))
+    issues.extend(validate_curve_orientation(data))
     return issues

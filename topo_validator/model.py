@@ -12,15 +12,40 @@ try:
 except ImportError:
     from typing_extensions import NotRequired
 
-TOLERANCE_POINT: float = 1e-6
-TOLERANCE_VOLUME: float = 1e-9
-TOLERANCE_LENGTH: float = 1e-3
-TOLERANCE_THICKNESS: float = 1e-3
+TOLERANCE_POINT: float = 5e-3
+TOLERANCE_VOLUME: float = 1e-3
+TOLERANCE_LENGTH: float = 5e-3
+TOLERANCE_THICKNESS: float = 5e-3
+
+# Crossing / containment tolerance (metres).  This must stay at or above the
+# coordinate quantisation of the input: the STEP-to-topology writer rounds
+# projected ordinates to a fixed number of decimal places, and rounding x and y
+# independently displaces a vertex by up to half a unit in each axis.  On
+# geometry set at an angle to the projection grid that destroys the exact face
+# coincidence the source model had, so faces that touch arrive fractions of a
+# millimetre apart.  A tolerance finer than that reads the rounding as
+# interpenetration and reports contact between adjacent solids as an overlap.
+#
+# Not a field of ``Tolerances``: it is a property of the coordinate encoding
+# rather than a per-dataset choice, and the same constant is used by the test
+# suite's independent validator, so the two engines agree.
+TOLERANCE_GEOMETRY: float = 1e-3
+
+# Degenerate-face cutoff for the Newell normal.  This bounds |nx, ny, nz|,
+# which is TWICE THE FACE AREA in m², not a distance — it is deliberately not
+# TOLERANCE_GEOMETRY, because a millimetre distance tolerance applied to an
+# area would discard every real face smaller than 5 cm².
+TOLERANCE_FACE_NORMAL: float = 1e-6
 
 Severity = Literal["error", "warning"]
 Orientation = Literal["+", "-"]
 ShellType = Literal["outer", "inner"]
 Coordinate3D = list[float]
+
+# Per-point dimensionality classification -- "2d" is exactly [x, y], "3d" is
+# [x, y, z, ...] (three or more numeric values), "invalid" is anything else.
+# See `point_dimensionality` below.
+PointDimensionality = Literal["2d", "3d", "invalid"]
 
 
 class Issue(TypedDict):
@@ -67,6 +92,7 @@ class Surface(TypedDict):
 
     id: str
     rings: list[Ring]
+    feature_type: NotRequired[str]
 
 
 class Shell(TypedDict):
@@ -75,6 +101,22 @@ class Shell(TypedDict):
     type: ShellType
     faces: list[str]
     face_orientations: dict[str, Orientation]
+
+
+class Relationship(TypedDict):
+    """Declared `topology.relationships` entry on a solid.
+
+    Per the OGC JSON-FG link-role shape (`bblocks://ogc.geo.json-fg.link-role`)
+    that the `topo-feature` topology datatype schema already defines
+    `relationships` as -- `rel` is expected to be the literal string
+    "topology"; entries with any other `rel` are not parsed into this shape
+    (see `loader._build_relationships`).
+    """
+
+    href: str
+    rel: str
+    role: str
+    targetFeatureType: str
 
 
 class Solid(TypedDict):
@@ -92,6 +134,7 @@ class Solid(TypedDict):
     burdened_id: NotRequired[str | None]
     host_id: str | None
     levels: list[str]
+    relationships: NotRequired[list[Relationship]]
 
 
 class ObservationCurve(TypedDict):
@@ -99,6 +142,14 @@ class ObservationCurve(TypedDict):
 
     ref: str
     source: Literal["observedVectors", "vectorObservations"]
+
+
+class SurfaceShellFaceReference(TypedDict):
+    """Face reference from a CSDM shell used to exempt surface-only shells
+    from the dangling-face check."""
+
+    ref: str
+    shell_id: str
 
 
 class TopologyData(TypedDict):
@@ -109,6 +160,7 @@ class TopologyData(TypedDict):
     surfaces: list[Surface]
     solids: list[Solid]
     observation_curves: NotRequired[list[ObservationCurve]]
+    surface_shell_face_refs: NotRequired[list[SurfaceShellFaceReference]]
 
 
 class TopologyIndexes(TypedDict):
@@ -230,3 +282,133 @@ def build_indexes(data: TopologyData) -> TopologyIndexes:
         "surfaces": surfaces,
         "solids": solids,
     }
+
+
+def solid_face_ids(solid: Solid) -> list[str]:
+    """Return the ids of every face bounding one solid.
+
+    The flat ``faces`` list is authoritative when present; a solid carrying
+    only structured ``shells`` falls back to the union of its shell faces.
+    ``loader`` populates both, so the fallback only matters for hand-built and
+    ``--raw-internal`` data — but every rule that asks "which faces does this
+    solid own?" must answer it the same way, or the rules disagree with each
+    other on the same solid.  TR-06, TR-10, and TR-18 all resolve ownership
+    through this function for that reason.
+
+    Args:
+        solid: Internal solid record.
+
+    Returns:
+        Ids of the faces bounding *solid*, in declaration order.
+    """
+    face_ids = solid.get("faces")
+    if face_ids:
+        return list(face_ids)
+
+    return [
+        face_id
+        for shell in solid.get("shells") or []
+        for face_id in shell.get("faces", [])
+    ]
+
+
+def solid_owned_face_ids(data: TopologyData) -> set[str]:
+    """Return the ids of every face that bounds a solid.
+
+    Ownership is defined as TR-10, and TR-18 defines it — see
+    :func:`solid_face_ids`, which resolves it for a single solid.
+
+    Args:
+        data: Valid internal topology data.
+
+    Returns:
+        Ids of the faces that bound at least one solid.
+    """
+    owned: set[str] = set()
+    for solid in data.get("solids", []):
+        owned.update(solid_face_ids(solid))
+    return owned
+
+
+def solid_owned_curve_ids(data: TopologyData) -> set[str]:
+    """Return the ids of every curve used by a ring of a solid-owned face.
+
+    A curve is solid-owned when at least one face that uses it bounds a solid.
+    The complement is the curves used only by surface-only faces — footprints,
+    ground surfaces, administrative planes — which bound no volume. These are
+    the same features TR-18 exempts as surface-only shells.
+
+    Args:
+        data: Valid internal topology data.
+
+    Returns:
+        Ids of the curves reachable from a solid-owned face.
+    """
+    owned_faces = solid_owned_face_ids(data)
+    owned: set[str] = set()
+    for surface in data.get("surfaces", []):
+        if surface["id"] not in owned_faces:
+            continue
+        for ring in surface.get("rings", []):
+            for member in ring.get("members", []):
+                owned.add(member["ref"])
+    return owned
+
+
+# ---------------------------------------------------------------------------
+# Mixed 2D/3D dataset support (vocabulary only -- not yet wired in)
+# ---------------------------------------------------------------------------
+#
+# `point_dimensionality` and `MIXED_DIMENSION_CURVE_CODE` are the shared
+# vocabulary for an upcoming per-point 2D/3D partitioning pass: a dataset may
+# legitimately mix 3D topology with 2D content (e.g. a cadastral parcel
+# outline) that should be excluded from 3D conformance checks rather than
+# rejected outright. Neither is used anywhere yet -- `validate_structure`
+# still classifies a dataset as uniformly 2D or 3D via
+# `points_are_all_two_dimensional`, and no rule emits
+# `MIXED_DIMENSION_CURVE_CODE`. They exist now so the eventual partitioning
+# module has settled names to build against instead of inventing them ad hoc.
+
+# Reserved for a curve whose vertices resolve to a mix of 2D and 3D points --
+# a genuine defect (unlike a curve whose vertices are consistently 2D, which
+# is legitimate 2D content), not yet detected by any rule.
+MIXED_DIMENSION_CURVE_CODE = "MIXED_DIMENSION_CURVE"
+
+
+def point_dimensionality(point: Any) -> PointDimensionality:
+    """Classify one point's coordinate dimensionality.
+
+    Args:
+        point: A candidate point record (typically a `Point`, but accepted as
+            `Any` so callers can classify a raw, not-yet-validated dict).
+
+    Returns:
+        "2d" for an exact [x, y] numeric pair, "3d" for [x, y, z, ...] (three
+        or more numeric values), or "invalid" for anything else -- wrong
+        length, non-numeric values, or a missing/malformed "coordinates"
+        field.
+
+    Unlike `points_are_all_two_dimensional` (validator.py), which classifies
+    an entire dataset as uniformly 2D or not, this classifies one point at a
+    time -- the building block a future mixed-dataset partitioning pass needs,
+    since today's all-or-nothing check cannot tell a legitimate 2D point in a
+    mostly-3D dataset apart from a genuinely malformed one.
+    """
+    if not isinstance(point, dict):
+        return "invalid"
+
+    coordinates = point.get("coordinates")
+    if not isinstance(coordinates, list):
+        return "invalid"
+
+    if not all(
+        isinstance(value, int | float) and not isinstance(value, bool)
+        for value in coordinates
+    ):
+        return "invalid"
+
+    if len(coordinates) == 2:
+        return "2d"
+    if len(coordinates) >= 3:
+        return "3d"
+    return "invalid"

@@ -27,7 +27,6 @@ RELATIONSHIP_ID_FIELDS = ("parent_id", "servient_id", "burdened_id", "host_id")
 SHELL_TYPES = {"outer", "inner"}
 
 TWO_D_COORDINATE_LENGTH = 2
-THREE_D_COORDINATE_LENGTH = 3
 
 
 # ---------------------------------------------------------------------------
@@ -174,20 +173,19 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
             warn(
                 "NO_3D_TOPOLOGY",
                 "All points have 2D coordinates; no 3D topology found. "
-                "3D topology conformance checks were skipped. 2D validation "
-                "is not yet implemented.",
+                "3D-specific conformance checks (shell/solid/volume rules) do "
+                "not apply; the 2D-applicable point/curve/surface rules were "
+                "run instead.",
                 path="points",
             )
         )
 
-    issues.extend(_validate_points_structure(
-        data["points"],
-        minimum_coordinate_length=TWO_D_COORDINATE_LENGTH if two_dimensional else THREE_D_COORDINATE_LENGTH,
-    ))
+    issues.extend(_validate_points_structure(data["points"]))
     issues.extend(_validate_curves_structure(data["curves"]))
     issues.extend(_validate_surfaces_structure(data["surfaces"]))
     issues.extend(_validate_solids_structure(data["solids"]))
     issues.extend(_validate_observation_curves_structure(data))
+    issues.extend(_validate_surface_shell_face_refs_structure(data))
 
     return issues
 
@@ -235,17 +233,19 @@ def points_are_all_two_dimensional(points: Any) -> bool:
 
 def _validate_points_structure(
     points: list[dict[str, Any]],
-    *,
-    minimum_coordinate_length: int = THREE_D_COORDINATE_LENGTH,
 ) -> list[Issue]:
     """Validate point coordinate structure.
 
+    Each point is checked independently against a floor of
+    `TWO_D_COORDINATE_LENGTH`: a 2D point ([x, y]) and a 3D point
+    ([x, y, z, ...]) are both structurally valid regardless of what the rest
+    of the dataset looks like, so a dataset mixing 2D content (e.g. a
+    cadastral parcel outline) with 3D topology does not have every 2D point
+    rejected merely because the rest of the dataset is 3D. Only a shorter
+    (0- or 1-value) coordinates list is a structural error.
+
     Args:
         points: Point records to validate.
-        minimum_coordinate_length: Minimum coordinate list length to accept.
-            Callers pass 2 for an all-2D dataset (see
-            `points_are_all_two_dimensional`) so 2D points aren't flagged as
-            structurally invalid merely for lacking a z value.
     """
     issues: list[Issue] = []
 
@@ -255,12 +255,12 @@ def _validate_points_structure(
         coordinates = point.get("coordinates")
         object_id = point.get("id")
 
-        if not isinstance(coordinates, list) or len(coordinates) < minimum_coordinate_length:
+        if not isinstance(coordinates, list) or len(coordinates) < TWO_D_COORDINATE_LENGTH:
             issues.append(
                 err(
                     "INVALID_COORDINATES",
                     f"{coordinates_path} must be a list with at least "
-                    f"{minimum_coordinate_length} numbers",
+                    f"{TWO_D_COORDINATE_LENGTH} numbers",
                     object_id=object_id,
                     path=coordinates_path,
                 )
@@ -708,9 +708,206 @@ def _validate_observation_curves_structure(data: Mapping[str, Any]) -> list[Issu
     return issues
 
 
+def _validate_surface_shell_face_refs_structure(
+    data: Mapping[str, Any],
+) -> list[Issue]:
+    """Validate optional surface shell face reference records."""
+    face_refs = data.get("surface_shell_face_refs", [])
+
+    if not isinstance(face_refs, list):
+        return [
+            err(
+                "INVALID_SURFACE_SHELL_FACE_REFS",
+                "surface_shell_face_refs must be a list when present",
+                path="surface_shell_face_refs",
+                extra={"actual_type": type(face_refs).__name__},
+            )
+        ]
+
+    issues: list[Issue] = []
+    for index, face_ref in enumerate(face_refs):
+        path = f"surface_shell_face_refs[{index}]"
+
+        if not isinstance(face_ref, dict):
+            issues.append(
+                err(
+                    "INVALID_SURFACE_SHELL_FACE_REF",
+                    f"{path} must be an object",
+                    path=path,
+                    extra={"actual_type": type(face_ref).__name__},
+                )
+            )
+            continue
+
+        ref = face_ref.get("ref")
+        if not isinstance(ref, str):
+            issues.append(
+                err(
+                    "INVALID_SURFACE_SHELL_FACE_REF_REF",
+                    f"{path}.ref must be a string",
+                    path=f"{path}.ref",
+                    extra={"actual_type": type(ref).__name__},
+                )
+            )
+
+        shell_id = face_ref.get("shell_id")
+        if not isinstance(shell_id, str):
+            issues.append(
+                err(
+                    "INVALID_SURFACE_SHELL_FACE_REF_SHELL_ID",
+                    f"{path}.shell_id must be a string",
+                    path=f"{path}.shell_id",
+                    extra={"actual_type": type(shell_id).__name__},
+                )
+            )
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
+
+
+EXCLUDED_FROM_3D_VALIDATION_CODE = "EXCLUDED_FROM_3D_VALIDATION"
+
+
+def _excluded_from_3d_validation_issue(category: str, excluded_ids: list[str]) -> Issue:
+    """Build a summarized, non-silent notice for one excluded-from-3D category.
+
+    One issue per category (not per id) mirrors the existing single-line
+    NO_3D_TOPOLOGY warning rather than reproducing a wall of near-identical
+    per-id lines; full traceability lives in `extra.excluded_ids`.
+    """
+    return warn(
+        EXCLUDED_FROM_3D_VALIDATION_CODE,
+        f"{len(excluded_ids)} {category} excluded from 3D topology validation "
+        f"because they are 2D; 2D-specific validation is not yet implemented "
+        f"for {category}.",
+        extra={
+            "category": category,
+            "count": len(excluded_ids),
+            "excluded_ids": excluded_ids,
+        },
+    )
+
+
+def _dimensionality_exclusion_issues(excluded_solid_ids: set[str]) -> list[Issue]:
+    """Build a summarized, non-silent notice for solids excluded from 3D validation.
+
+    Points, curves, and surfaces routed into the 2D view are validated by
+    `_run_2d_applicable_rules` instead of being blanket-excluded. Solids have
+    no 2D analogue in any rule -- TR-06/07/18/19/24/25/26/27 are inherently
+    volumetric -- so they are the only category this notice still covers.
+
+    Args:
+        excluded_solid_ids: Ids of solids removed from the 3D view because
+            they own at least one 2D-tainted face. Solids never appear in
+            `topology_2d` itself -- see `dimensionality`'s module docstring.
+    """
+    if not excluded_solid_ids:
+        return []
+
+    return [_excluded_from_3d_validation_issue("solids", sorted(excluded_solid_ids))]
+
+
+def _tag_as_2d(issues: list[Issue]) -> list[Issue]:
+    """Return *issues* with `extra.dimensionality` set to "2d".
+
+    Lets a report distinguish a 2D-view finding under a TR-xx code from an
+    identical-looking 3D-view finding under the same code.
+    """
+    for issue in issues:
+        issue["extra"] = {**issue.get("extra", {}), "dimensionality": "2d"}
+    return issues
+
+
+def _pad_2d_points_to_3d(topology_2d: TopologyData) -> TopologyData:
+    """Return a shallow copy of *topology_2d* with every point padded to (x, y, 0.0).
+
+    The shared 3D segment-intersection helper (`geometry.segments_intersect_3d`
+    and its `vec_sub`/`vec_cross`/`vec_dot` primitives) hard-indexes a third
+    coordinate. Every point in `topology_2d` is 2D by construction (see
+    `dimensionality.partition_topology`), so padding every point onto a common
+    z=0 plane is exact, not an approximation: a curve or ring living entirely
+    at z=0 self-intersects (or doesn't) identically to its unpadded 2D
+    projection. `curves` and `surfaces` reference points by id and are
+    returned unchanged.
+
+    Only used internally for the three rules that reach the 3D helper
+    (`TR-02`/`TR-14`/`TR-15`); their issue messages and `extra` fields
+    reference object ids and segment indices, never raw coordinates, so the
+    padding never surfaces in reported output.
+    """
+    padded_points = [
+        {**point, "coordinates": [point["coordinates"][0], point["coordinates"][1], 0.0]}
+        for point in topology_2d.get("points", [])
+    ]
+    return {**topology_2d, "points": padded_points}
+
+
+def _run_2d_applicable_rules(
+    topology_2d: TopologyData,
+    tolerances: Tolerances,
+) -> list[Issue]:
+    """Run the 2D-applicable subset of point/curve/surface rules against the
+    2D-only view produced by `dimensionality.partition_topology`.
+
+    Most rules here are purely referential, or use coordinate math that
+    degrades correctly for consistently-2D input -- `topology_2d` never mixes
+    2D and 3D points, so the pairwise-distance checks (TR-01, TR-12) never
+    hit the length-mismatch case that would make reusing them unsafe.
+
+    TR-02 (CurveNoSelfIntersection), TR-14 (CurveIntersectionAtNodesOnly), and
+    TR-15 (NoSurfaceSelfIntersection) all call the shared 3D
+    segment-intersection helper, which hard-indexes a third coordinate; these
+    three are run against a z=0-padded copy of `topology_2d` (see
+    `_pad_2d_points_to_3d`) rather than `topology_2d` itself.
+
+    Every returned issue is tagged `extra.dimensionality = "2d"`.
+    """
+    from .conformance.cc01_points import (
+        validate_point_fabric_consistency,
+        validate_unique_points,
+    )
+    from .conformance.cc02_curves import (
+        validate_curve_intersection_at_nodes_only,
+        validate_curve_no_self_intersection,
+        validate_curve_orientation,
+        validate_minimum_curve_length,
+        validate_no_dangling_curves,
+        validate_no_duplicate_curves,
+    )
+    from .conformance.cc03_surfaces import (
+        validate_no_duplicate_surfaces,
+        validate_no_surface_self_intersection,
+        validate_shared_surface_edges,
+        validate_surface_closed_rings,
+        validate_surface_connected_interior,
+        validate_surface_curve_consistency,
+    )
+
+    issues: list[Issue] = []
+    issues.extend(validate_unique_points(topology_2d, tol=tolerances.point))
+    issues.extend(validate_point_fabric_consistency(topology_2d))
+    issues.extend(validate_no_dangling_curves(topology_2d))
+    issues.extend(
+        validate_minimum_curve_length(topology_2d, min_length=tolerances.length)
+    )
+    issues.extend(validate_no_duplicate_curves(topology_2d))
+    issues.extend(validate_curve_orientation(topology_2d))
+    issues.extend(validate_surface_closed_rings(topology_2d))
+    issues.extend(validate_shared_surface_edges(topology_2d))
+    issues.extend(validate_no_duplicate_surfaces(topology_2d))
+    issues.extend(validate_surface_curve_consistency(topology_2d))
+    issues.extend(validate_surface_connected_interior(topology_2d))
+
+    padded_topology_2d = _pad_2d_points_to_3d(topology_2d)
+    issues.extend(validate_curve_no_self_intersection(padded_topology_2d))
+    issues.extend(validate_curve_intersection_at_nodes_only(padded_topology_2d))
+    issues.extend(validate_no_surface_self_intersection(padded_topology_2d))
+
+    return _tag_as_2d(issues)
 
 
 def validate_topology(
@@ -764,36 +961,77 @@ def validate_topology(
             progress("Skipping topology conformance checks because structure errors were found")
         return issues
 
-    if points_are_all_two_dimensional(data.get("points")):
-        # Conformance-class rules assume 3D coordinates throughout (volume,
-        # thickness, 3D segment intersection, ...); running them against an
-        # all-2D dataset would either crash or produce meaningless results.
-        # validate_structure() already recorded the NO_3D_TOPOLOGY warning.
-        if progress is not None:
-            progress("Skipping topology conformance checks: no 3D topology found (2D data)")
-        return issues
-
+    # A pure-2D dataset is not special-cased here: `partition_topology` routes
+    # every point (and everything built from them) into `topology_2d`, so
+    # `topology_3d` simply ends up empty and the CC-01..07 loop below no-ops
+    # over it harmlessly. This is what makes a pure-2D dataset get the same
+    # real 2D-applicable rule coverage as the 2D remainder of a mixed
+    # dataset, instead of only ever producing the NO_3D_TOPOLOGY warning from
+    # validate_structure() above.
     from .conformance import CONFORMANCE_CLASSES
+    from .dimensionality import partition_topology
 
     topology = cast(TopologyData, cast(object, data))
+
+    if progress is not None:
+        progress("Running mixed 2D/3D dimensionality partitioning")
+
+    topology_3d, topology_2d, dimensionality_issues = partition_topology(topology)
+    issues.extend(dimensionality_issues)
+
+    excluded_solid_ids = {
+        solid["id"] for solid in topology.get("solids", [])
+    } - {solid["id"] for solid in topology_3d.get("solids", [])}
+    exclusion_issues = _dimensionality_exclusion_issues(excluded_solid_ids)
+    issues.extend(exclusion_issues)
+
+    two_dimensional_rule_issues = _run_2d_applicable_rules(topology_2d, t)
+    issues.extend(two_dimensional_rule_issues)
+
+    if progress is not None:
+        progress(
+            "Completed dimensionality partitioning and 2D-applicable rules "
+            f"({len(dimensionality_issues) + len(exclusion_issues) + len(two_dimensional_rule_issues)} issue(s))"
+        )
+
     selected = set(conformance_classes or [])
 
     for cc in CONFORMANCE_CLASSES:
         if selected and cc.CONFORMANCE_CLASS_ID not in selected:
             continue
 
-        class_label = (
-            f"{cc.CONFORMANCE_CLASS_ID} "
-            f"{getattr(cc, 'CONFORMANCE_CLASS_NAME', cc.__name__)}"
-        )
+        class_label = f"{cc.CONFORMANCE_CLASS_ID} {cc.CONFORMANCE_CLASS_NAME}"
 
         if progress is not None:
             progress(f"Running {class_label}")
 
-        class_issues = cc.validate(topology, tolerances=t)
+        class_issues = cc.validate(topology_3d, tolerances=t)
         issues.extend(class_issues)
 
         if progress is not None:
             progress(f"Completed {class_label} ({len(class_issues)} issue(s))")
+
+    if not selected or "CC-07" in selected:
+        from .conformance.cc07_containment import (
+            validate_declared_easement_burden,
+            validate_declared_parcel_containment,
+        )
+
+        if progress is not None:
+            progress("Running CC-07 declared parcel-relationship checks (TR-28/TR-29)")
+
+        parcel_relationship_issues = validate_declared_parcel_containment(
+            topology_3d, topology_2d
+        )
+        parcel_relationship_issues.extend(
+            validate_declared_easement_burden(topology_3d, topology_2d)
+        )
+        issues.extend(parcel_relationship_issues)
+
+        if progress is not None:
+            progress(
+                "Completed CC-07 declared parcel-relationship checks "
+                f"({len(parcel_relationship_issues)} issue(s))"
+            )
 
     return issues

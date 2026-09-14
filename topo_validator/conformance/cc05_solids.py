@@ -12,19 +12,17 @@ from __future__ import annotations
 from ..geometry import (
     point_coordinates,
     segments_intersect_3d,
+    shell_polygons,
     signed_volume_of_polygons,
     solid_bbox,
-    ring_coords,
+    solid_shells,
 )
 
 from ..model import (
-    Curve,
     Issue,
-    Point,
     Shell,
     ShellType,
     Solid,
-    Surface,
     Tolerances,
     TopologyData,
     build_indexes,
@@ -33,13 +31,16 @@ from ..model import (
 
 CONFORMANCE_CLASS_ID = "CC-05"
 CONFORMANCE_CLASS_NAME = "Solid topology"
-RULE_IDS = ["TR-07", "TR-19", "TR-24", "TR-25"]
+RULE_IDS = ["TR-07", "TR-19", "TR-24", "TR-25", "TR-26"]
 
 ZERO_OR_NEGATIVE_VOLUME_CODE = "ZERO_OR_NEGATIVE_VOLUME"
 SOLID_BELOW_MINIMUM_THICKNESS = "SOLID_BELOW_MINIMUM_THICKNESS"
 OUTER_SHELL_TYPE: ShellType = "outer"
 OUTER_SHELL_REVERSED_CODE = "SHELL_ORIENTATION_REVERSED"
 INNER_SHELL_REVERSED_CODE = "INNER_SHELL_ORIENTATION_REVERSED"
+DECLARED_VOLUME_MISMATCH_CODE = "DECLARED_VOLUME_MISMATCH"
+DECLARED_VOLUME_RELATIVE_TOLERANCE = 0.002
+DECLARED_VOLUME_ABSOLUTE_TOLERANCE = 0.02
 
 SolidSegment = tuple[int, list[float], list[float]]
 SolidIntersection = tuple[SolidSegment, SolidSegment]
@@ -283,42 +284,10 @@ def validate_no_solid_self_intersection(
 # ---------------------------------------------------------------------------
 
 
-def _solid_shells(solid: Solid) -> list[Shell]:
-    """Return structured shells, falling back to legacy flat solid faces."""
-    fallback_shell: Shell = {
-        "type": OUTER_SHELL_TYPE,
-        "faces": solid.get("faces", []),
-        "face_orientations": solid.get("face_orientations", {}),
-    }
-    return solid.get("shells") or [fallback_shell]
-
-
-def _shell_polygons(
-    shell: Shell,
-    surfaces: dict[str, Surface],
-    curves: dict[str, Curve],
-    points: dict[str, Point],
-) -> list[list[list[float]]]:
-    """Build oriented polygon coordinate lists for all resolvable shell faces."""
-    polygons: list[list[list[float]]] = []
-    face_orientations = shell.get("face_orientations", {})
-
-    for face_id in shell.get("faces", []):
-        surface = surfaces.get(face_id)
-        if surface is None:
-            continue
-
-        face_orientation = face_orientations.get(face_id, "+")
-        for ring in surface.get("rings", []):
-            coords = ring_coords(ring, curves, points)
-            if not coords:
-                continue
-
-            polygons.append(
-                list(reversed(coords)) if face_orientation == "-" else coords
-            )
-
-    return polygons
+# ``solid_shells`` and ``shell_polygons`` moved to ``..geometry`` when CC-04
+# gained the TR-27 closure check, so both classes read a solid's shells the
+# same way.  The deliberate duplication in this project is between the package
+# and the test suite's independent validator, not within the package itself.
 
 
 def _shell_orientation_issue(
@@ -371,8 +340,8 @@ def validate_shell_orientation(
     for solid in data.get("solids", []):
         solid_id = solid["id"]
 
-        for shell in _solid_shells(solid):
-            polygons = _shell_polygons(shell, surfaces, curves, points)
+        for shell in solid_shells(solid):
+            polygons = shell_polygons(shell, surfaces, curves, points)
             if not polygons:
                 continue
 
@@ -388,6 +357,90 @@ def validate_shell_orientation(
                 errors.append(issue)
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# TR-26  Declared volume consistency
+# ---------------------------------------------------------------------------
+
+
+def _declared_volume_mismatch_issue(
+    solid_id: str,
+    declared: float,
+    expected: float,
+    tolerance: float,
+) -> Issue:
+    """Create a TR-26 issue for a solid whose declared volume is inconsistent."""
+    return err(
+        DECLARED_VOLUME_MISMATCH_CODE,
+        f"Solid {solid_id} declares volume {declared:.3f} but its topology "
+        f"encloses {expected:.3f} (delta {declared - expected:+.3f}; "
+        f"tolerance {tolerance:.3f})",
+        object_id=solid_id,
+        extra={
+            "declared_volume": declared,
+            "topology_volume": expected,
+            "tolerance": tolerance,
+        },
+    )
+
+
+def validate_declared_volume_matches_topology(data: TopologyData) -> list[Issue]:
+    """
+    TR-26: a solid's declared volume must match the volume of its own topology.
+
+    The declared value is derived by the producer from published face areas and
+    face normals via the divergence theorem's z-integral. This recomputes it
+    from the points and rings alone, so an error in any of those inputs shows up
+    as a mismatch rather than cancelling out.
+
+    Shell contributions are summed *signed* before the absolute value is taken,
+    so a void's negative contribution subtracts from the outer shell rather than
+    inflating the total. Solids whose topology encloses no volume are skipped:
+    their geometry is unusable and other rules in this class report that.
+    """
+    indexes = build_indexes(data)
+    surfaces = indexes["surfaces"]
+    curves = indexes["curves"]
+    points = indexes["points"]
+
+    issues: list[Issue] = []
+
+    for solid in data.get("solids", []):
+        solid_id = solid["id"]
+
+        signed_volume = 0.0
+        for shell in solid_shells(solid):
+            signed_volume += signed_volume_of_polygons(
+                shell_polygons(shell, surfaces, curves, points)
+            )
+
+        expected = abs(signed_volume)
+        if expected == 0.0:
+            continue
+
+        # Relative for solids large enough that rounding is negligible,
+        # absolute for small ones. Rounding the published coordinates perturbs
+        # the integral by an amount set by the solid's own dimensions, not by
+        # its volume, so a purely relative bound is unreasonably tight on a
+        # small solid.
+        tolerance = max(
+            DECLARED_VOLUME_RELATIVE_TOLERANCE * expected,
+            DECLARED_VOLUME_ABSOLUTE_TOLERANCE,
+        )
+        declared = solid.get("volume", 0.0)
+
+        if abs(declared - expected) > tolerance:
+            issues.append(
+                _declared_volume_mismatch_issue(
+                    solid_id,
+                    declared,
+                    expected,
+                    tolerance,
+                )
+            )
+
+    return issues
 
 
 def validate(data: TopologyData, tolerances: Tolerances | None = None) -> list[Issue]:
@@ -407,5 +460,9 @@ def validate(data: TopologyData, tolerances: Tolerances | None = None) -> list[I
     issues.extend(validate_positive_volume(data, min_positive_volume=t.volume))
     issues.extend(validate_minimum_solid_thickness(data, min_thickness=t.thickness))
     issues.extend(validate_no_solid_self_intersection(data))
-    issues.extend(validate_shell_orientation(data))
+    # TR-25's sign threshold is a volume tolerance, so it takes the same
+    # override as TR-07.  Omitting it here silently pinned the rule to the
+    # module default and made a caller-supplied Tolerances.volume a no-op.
+    issues.extend(validate_shell_orientation(data, tol=t.volume))
+    issues.extend(validate_declared_volume_matches_topology(data))
     return issues
