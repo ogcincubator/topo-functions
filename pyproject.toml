@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topo-rdf-geojson"
-version = "0.9.3"
+version = "0.9.4"
 description = "Convert RDF (Turtle/JSON-LD) topology models (geojson-topo vocabulary) to GeoJSON geometry objects, convert topo-feature JSON to GeoJSON, and validate Topo Feature / 3D CSDM topology consistency"
 readme = "README.md"
 license = { text = "MIT" }

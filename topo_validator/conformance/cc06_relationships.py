@@ -32,6 +32,7 @@ from ..solid_geometry import (
     solid_face_geometries,
     solids_properly_overlap,
 )
+from .cc07_containment import SECONDARY_PARCEL_TYPES, THEMATIC_PARCEL_TYPE
 
 CONFORMANCE_CLASS_ID = "CC-06"
 CONFORMANCE_CLASS_NAME = "Solid relationship topology"
@@ -39,6 +40,18 @@ RULE_IDS = ["TR-08", "TR-10"]
 
 FACE_ADJACENCY_LIMIT_EXCEEDED_CODE = "FACE_ADJACENCY_LIMIT_EXCEEDED"
 MAX_SOLIDS_PER_FACE = 2
+
+# TR-08 only prohibits overlap between solids that both represent Primary
+# Parcel-equivalent cadastral geometry (a parcel's own extent, or one of its
+# declared subdivision/"child" components). Secondary/easement solids are
+# expected to legitimately overlap Primary Parcels and each other (rights,
+# restrictions, easements, volumetric interests), and thematic solids sit
+# inside a host parcel by design -- see `cc07_containment` for the
+# PARCEL_LIKE_TYPES / THEMATIC_PARCEL_TYPE distinctions this reuses. A solid
+# with no declared `parcel_type` at all defaults to Primary-equivalent (the
+# same conservative default `loader._build_solids` already applies), so an
+# orphan/malformed solid is never silently treated as exempt.
+NON_PRIMARY_OVERLAP_PARCEL_TYPES = SECONDARY_PARCEL_TYPES | {THEMATIC_PARCEL_TYPE}
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +69,25 @@ def _group_solids_by_theme(solids: list[Solid]) -> dict[str, list[Solid]]:
     return solids_by_theme
 
 
+def _is_primary_parcel_solid(solid: Solid) -> bool:
+    """Return True when *solid* is Primary Parcel-equivalent for TR-08.
+
+    Secondary/easement and thematic solids are excluded; every other
+    `parcel_type` (including a missing one, which defaults to `"primary"`)
+    counts as Primary-equivalent.
+    """
+    return solid.get("parcel_type", "primary") not in NON_PRIMARY_OVERLAP_PARCEL_TYPES
+
+
 def _solid_pair_is_exempt_from_overlap(solid_a: Solid, solid_b: Solid) -> bool:
     """Return True when a solid pair is exempt from TR-08 overlap checking."""
+    # Exemption 0: TR-08 only prohibits overlap between two Primary
+    # Parcel-equivalent solids. A Secondary/easement/thematic solid on
+    # either side is out of scope for this rule (other rules -- TR-20, TR-21,
+    # TR-28/29 -- still apply to it).
+    if not (_is_primary_parcel_solid(solid_a) and _is_primary_parcel_solid(solid_b)):
+        return True
+
     # Exemption 1: parent-child containment is validated by TR-09.
     if solid_a.get("parent_id") == solid_b["id"]:
         return True
@@ -117,7 +147,7 @@ def validate_no_solid_overlap(
     data: TopologyData,
 ) -> list[Issue]:
     """
-    TR-08: solids in the same theme must not overlap.
+    TR-08: Primary Parcel-equivalent solids in the same theme must not overlap.
 
     Detection runs in two phases.  An AABB test is used only as a **broad
     phase**: disjoint bounding boxes prove the solids cannot share volume, so
@@ -127,8 +157,17 @@ def validate_no_solid_overlap(
     :func:`solid_geometry.solids_properly_overlap`, which reports an overlap
     only for genuine interpenetration or nesting.
 
-    Three categories of a pair are exempt before either phase runs:
+    Four categories of a pair are exempt before either phase runs:
 
+    0. **Non-Primary pairs** – TR-08 only governs Primary Parcel-equivalent
+       geometry (`parcel_type` not in {"secondary", "easement", "thematic"}).
+       A Secondary/easement or thematic solid on either side of the pair is
+       out of scope for this rule: Secondary/easement solids (rights,
+       restrictions, volumetric interests) may legitimately overlap Primary
+       Parcels and each other, and thematic solids sit inside a host parcel
+       by design. This does not exempt such solids from other rules (TR-20
+       easement containment, TR-21 thematic host, TR-28/29 declared
+       relationships).
     1. **Parent–child pairs** – containment is expected and verified by TR-09.
     2. **Disjoint-level pairs** – solids that declare non-overlapping "levels"
        sets occupy separate storeys; a 3-D AABB overlap between them is a
@@ -140,7 +179,10 @@ def validate_no_solid_overlap(
     Exemptions 2 and 3 are retained for speed and because they encode survey
     intent, but they are no longer load-bearing for correctness: the narrow
     phase clears shared-boundary and wrapping arrangements on the geometry
-    alone.
+    alone. `SolidAggregate` membership itself is *not* an exemption: two
+    solids intended as members of one aggregate must still not have
+    overlapping interior volume unless exemption 0, 1, 2, or 3 already
+    applies to them.
     """
     issues: list[Issue] = []
     indexes = build_indexes(data)
