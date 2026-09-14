@@ -504,12 +504,14 @@ def _declared_relationship(
     return matches[0], []
 
 
-def _parcel_surfaces_by_id(topology_2d: TopologyData) -> dict[str, Surface]:
-    """Return the 2D view's PrimaryParcel-typed surfaces, keyed by id."""
+def _parcel_surfaces_by_id(
+    topology_2d: TopologyData, expected_feature_type: str
+) -> dict[str, Surface]:
+    """Return the 2D view's surfaces of *expected_feature_type*, keyed by id."""
     return {
         surface["id"]: surface
         for surface in topology_2d.get("surfaces", [])
-        if surface.get("feature_type") == PRIMARY_PARCEL_FEATURE_TYPE
+        if surface.get("feature_type") == expected_feature_type
     }
 
 
@@ -584,6 +586,7 @@ def _validate_declared_parcel_relationship(
     topology_3d: TopologyData,
     topology_2d: TopologyData,
     parcel_like_types: set[str],
+    target_feature_type: str,
     role: str,
     missing_code: str,
     multiple_code: str,
@@ -599,15 +602,23 @@ def _validate_declared_parcel_relationship(
             against its surfaces, since a parcel surface's points are
             natively 2D and always land here.
         parcel_like_types: `parcel_type` values this rule applies to.
+        target_feature_type: the 2D `feature_type` a declared relationship's
+            target must resolve against (`PRIMARY_PARCEL_FEATURE_TYPE` for
+            both TR-28 and TR-29 today). Kept as an explicit parameter,
+            rather than assumed inside `_parcel_surfaces_by_id`, so this
+            shared engine can be reused by a future rule that resolves
+            declared relationships against a different target feature type,
+            without duplicating the cardinality/lookup/geometric-containment
+            logic below.
         role: The declared relationship role this rule requires exactly one
             of.
         missing_code: Issue code for a missing declaration.
         multiple_code: Issue code for more than one declaration.
         unknown_code: Issue code for a declared `href` that resolves to no
-            known parcel surface.
+            known surface of `target_feature_type`.
         type_mismatch_code: Issue code for a declared `targetFeatureType`
-            that doesn't match the resolved parcel's actual type.
-        not_within_code: Issue code for a footprint outside the parcel.
+            that doesn't match the resolved target's actual type.
+        not_within_code: Issue code for a footprint outside the target.
 
     `unknown_code`/`type_mismatch_code` are passed in rather than shared
     module constants because a solid with `parcel_type == "secondary"` is
@@ -616,7 +627,7 @@ def _validate_declared_parcel_relationship(
     between the two rules would make both rows in a report's rule-results
     table show FAIL whenever only one rule's check actually fired.
     """
-    parcel_surfaces = _parcel_surfaces_by_id(topology_2d)
+    parcel_surfaces = _parcel_surfaces_by_id(topology_2d, target_feature_type)
     if not parcel_surfaces:
         return []
 
@@ -671,6 +682,7 @@ def validate_declared_parcel_containment(
         topology_3d,
         topology_2d,
         PARCEL_LIKE_TYPES,
+        PRIMARY_PARCEL_FEATURE_TYPE,
         CONTAINING_PRIMARY_PARCEL_ROLE,
         MISSING_PARCEL_CONTAINMENT_RELATIONSHIP_CODE,
         MULTIPLE_PARCEL_CONTAINMENT_RELATIONSHIPS_CODE,
@@ -699,6 +711,7 @@ def validate_declared_easement_burden(
         topology_3d,
         topology_2d,
         SECONDARY_PARCEL_TYPES,
+        PRIMARY_PARCEL_FEATURE_TYPE,
         BURDENED_BY_SECONDARY_PARCEL_ROLE,
         MISSING_EASEMENT_BURDEN_RELATIONSHIP_CODE,
         MULTIPLE_EASEMENT_BURDEN_RELATIONSHIPS_CODE,
