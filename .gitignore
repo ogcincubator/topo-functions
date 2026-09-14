@@ -11,4 +11,5 @@ tests/output/bblock_debug/
 skills-lock.json
 .mcp.json
 .claude/settings.local.json
-
+agent
+tests/output/topo2geojson/

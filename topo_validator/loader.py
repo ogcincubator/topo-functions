@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterator
 
+from .geometry import polygon_area_vector
 from .model import (
     Curve,
     ObservationCurve,
@@ -336,9 +337,95 @@ def _chain_ring_curve_orientations(
     return members
 
 
+def _ring_signed_area_z(
+    members: list[RingMember],
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+) -> float | None:
+    """Return the signed z-component (2x the ring's planar area) of *members*'
+    resolved (x, y) boundary, or None when it can't be determined.
+
+    Reuses `geometry.polygon_area_vector` (Newell's method): its z-component
+    on z=0 points reduces to the standard 2D shoelace formula, positive for
+    a counter-clockwise traversal. Returns None when any referenced curve or
+    point is missing/uncoordinated, or the ring resolves to fewer than 3
+    distinct vertices -- callers should leave orientation as-is in that case.
+    """
+    coords: list[list[float]] = []
+
+    for member in members:
+        curve = curves.get(member["ref"])
+        if curve is None:
+            return None
+
+        vertices = curve.get("vertices", [])
+        ordered = (
+            vertices[:-1]
+            if member["orientation"] == "+"
+            else list(reversed(vertices))[:-1]
+        )
+
+        for vertex_id in ordered:
+            point = points.get(vertex_id)
+            if point is None:
+                return None
+
+            coordinates = point.get("coordinates")
+            if not isinstance(coordinates, list) or len(coordinates) < 2:
+                return None
+
+            coords.append([coordinates[0], coordinates[1], 0.0])
+
+    if len(coords) < 3:
+        return None
+
+    return polygon_area_vector(coords)[2]
+
+
+def _canonicalize_ring_winding(
+    members: list[RingMember],
+    curves: dict[str, Curve],
+    points: dict[str, Point],
+    expect_ccw: bool,
+) -> list[RingMember]:
+    """Reverse *members* so its resolved winding matches the expected
+    convention (counter-clockwise for an outer ring, clockwise for a hole),
+    when real point coordinates are available to determine it.
+
+    `_chain_ring_curve_orientations` only guarantees a *closed* traversal --
+    which of the ring's two possible rotational directions it lands on is an
+    accident of the order curves happen to be listed in `references`, not a
+    geometric fact: re-listing the same ring's curves can flip the chase's
+    chosen direction even though the underlying polygon is unchanged (proven
+    by construction -- the chase always anchors its first listed curve to
+    "+"). Comparing that listing-order-dependent orientation across two
+    different surfaces, as TR-05 (`conformance.cc03_surfaces`) does, is only
+    meaningful once every ring's winding is pinned to the same,
+    geometry-derived convention -- this is what pins it.
+
+    Left unchanged (best-effort) when coordinates are missing or the ring is
+    degenerate; structural rules (TR-04, TR-17) already cover those cases,
+    and a dataset with no inline coordinates falls back to today's
+    connectivity-only result rather than losing its ring entirely.
+    """
+    signed_area_z = _ring_signed_area_z(members, curves, points)
+    if not signed_area_z:
+        return members
+
+    is_ccw = signed_area_z > 0.0
+    if is_ccw == expect_ccw:
+        return members
+
+    return [
+        {**member, "orientation": _ORIENTATION_FLIP[member["orientation"]]}
+        for member in reversed(members)
+    ]
+
+
 def _build_parcel_surfaces(
     data: dict[str, Any],
     curves: dict[str, Curve],
+    points: dict[str, Point],
 ) -> list[Surface]:
     """Build internal surface records from CSDM parcel FeatureCollections.
 
@@ -349,7 +436,13 @@ def _build_parcel_surfaces(
     chaining consecutive curve endpoints (see
     `_chain_ring_curve_orientations`), mirroring how `topo2geojson` resolves
     the same reference shape into geometry, but at the id level to build a
-    structural `Ring` instead.
+    structural `Ring` instead. The chase alone only guarantees a *closed*
+    ring, not a canonical winding -- when *points* supplies real coordinates,
+    each ring is additionally canonicalized to a consistent winding
+    (counter-clockwise outer, clockwise hole) via
+    `_canonicalize_ring_winding`, so orientation is comparable across
+    different parcel surfaces (needed by TR-05, `validate_shared_surface_edges`)
+    rather than only self-consistent within one ring.
 
     Scoped to `Polygon`; `AggregatePolygon` (combining several already-built
     parcel polygons into one MultiPolygon, per `topo2geojson`'s handling) is
@@ -372,6 +465,10 @@ def _build_parcel_surfaces(
         curves: Curve records already built from `data["edges"]`, keyed by
             id -- a parcel ring's curve ids resolve against these, since a
             parcel's edges are ordinary `edges` collection features.
+        points: Point records already built from `data["points"]`, keyed by
+            id -- used to resolve each ring's real coordinates for winding
+            canonicalization; a ring whose points aren't found here keeps
+            its raw chased orientation unchanged.
 
     Returns:
         Surface records, one per `Polygon`-typed parcel feature with at
@@ -411,10 +508,16 @@ def _build_parcel_surfaces(
                 ):
                     continue
 
+                is_hole = bool(rings)
+                chained_members = _chain_ring_curve_orientations(curve_ids, curves)
+                canonical_members = _canonicalize_ring_winding(
+                    chained_members, curves, points, expect_ccw=not is_hole
+                )
+
                 rings.append(
                     {
-                        "type": "outer" if not rings else "inner",
-                        "members": _chain_ring_curve_orientations(curve_ids, curves),
+                        "type": "inner" if is_hole else "outer",
+                        "members": canonical_members,
                     }
                 )
 
@@ -829,11 +932,16 @@ def from_csdm_json(data: dict[str, Any]) -> TopologyData:
     shell_map = _build_shell_map(data)
     curves = _build_curves(data)
     curve_map = {curve["id"]: curve for curve in curves}
+    points = _build_points(data)
+    point_map = {point["id"]: point for point in points}
 
     return {
-        "points": _build_points(data),
+        "points": points,
         "curves": curves,
-        "surfaces": _build_surfaces(data, ring_map) + _build_parcel_surfaces(data, curve_map),
+        "surfaces": (
+            _build_surfaces(data, ring_map)
+            + _build_parcel_surfaces(data, curve_map, point_map)
+        ),
         "solids": _build_solids(data, shell_map),
         "observation_curves": _build_observation_curves(data),
         "surface_shell_face_refs": _build_surface_shell_face_refs(shell_map),
