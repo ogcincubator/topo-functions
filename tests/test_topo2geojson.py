@@ -142,8 +142,8 @@ def test_parcel1_without_ttl_cannot_be_resolved():
     """parcel1.json's topology only references edge ids; with no TTL loaded
     there are no coordinates anywhere to resolve them against."""
     with PARCEL_FILE.open() as fh:
-        with pytest.raises(ValueError, match="No point geometries found"):
-            process(fh, mode="faces", number=None)
+        output = process(fh, mode="faces", number=None)
+    assert json.loads(output) == {"warning": "no point geometries found in input or TTL files"}
 
 
 def test_parcel1_resolved_via_ttl():

@@ -1074,7 +1074,7 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
             data["features"] = []
 
     if not geomsmap and not ttl_coords:
-        raise ValueError("No point geometries found in input or TTL files")
+        return '{ "warning": "no point geometries found in input or TTL files" }'
 
     # Process collection-level topology (data["edges"], data["rings"], data["faces"],
     # data["shells"], data["solids"])
