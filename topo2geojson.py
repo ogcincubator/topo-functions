@@ -18,6 +18,7 @@ import glob as glob_module
 import logging
 import os
 from typing import Generator, List
+from urllib.parse import urljoin
 
 from pyproj import Transformer
 
@@ -163,11 +164,26 @@ def _prefixes_from_jsonld_context(context) -> dict[str, str]:
     return prefixes
 
 
+def _transform_context(transform_metadata):
+    """Return the TransformContext-like object a bblocks transform host attaches
+    to `transform_metadata`, regardless of which attribute name the specific
+    host uses for it: the plugin harness (`_plugin_harness.py`, what this
+    module runs under -- see its module docstring) exposes it as `.ctx`, while
+    the python/node in-process harness exposes the same information as
+    `.context`. Checking `.ctx` first matches this module's actual (plugin)
+    invocation path; `.context` is a defensive fallback in case this module is
+    ever imported and driven by a different host."""
+    ctx = getattr(transform_metadata, "ctx", None)
+    if ctx is None:
+        ctx = getattr(transform_metadata, "context", None)
+    return ctx
+
+
 def _prefixes_from_transform_context(transform_metadata) -> dict[str, str]:
     """Extract example-level examples.yaml prefixes exposed by a bblocks
-    transform host via transform_metadata.context.example/.snippet."""
+    transform host via transform_metadata.ctx.example/.snippet."""
     prefixes: dict[str, str] = {}
-    context = getattr(transform_metadata, "context", None)
+    context = _transform_context(transform_metadata)
     if context is None:
         return prefixes
     for attr in ("example", "snippet"):
@@ -224,6 +240,39 @@ def _merge_namespaces(data: dict, transform_metadata=None, cli_namespaces=None) 
     _apply(_normalize_namespace_input(cli_namespaces))
 
     return merged
+
+
+def _profile_context_url(transform_metadata) -> str | None:
+    """Resolve the URL of the source bblock's own JSON-LD context, so the
+    transform's output can link back to the term/prefix definitions
+    (condition/form/state/monumentedBy etc., and the wa-monument-*/csdm
+    CURIE prefixes those values are compacted against -- see
+    _merge_namespaces above) that a generic GeoJSON context can't provide.
+
+    The context's jsonld_context_path is the context file's path relative to
+    the register root; its base_url is whatever --base-url this run was
+    invoked with (http://localhost:9090/register/ in local preview, the real
+    GitHub Pages URL in a hosted build) -- joining them with urljoin (the same
+    pattern bblocks-postprocess itself uses for output URLs) gives a link
+    that resolves correctly in both without any special-casing here.
+
+    This assumes the output still uses the *same property names, nesting and
+    value shapes* the source context defines terms for -- true today (the
+    condition/form/state values under monumentedBy keep their original names
+    and positions, just CURIE-compacted). If a future change to this
+    transform renames, flattens, or otherwise reshapes those fields, this
+    link would misdescribe the output and should be revisited -- see the
+    "propagating context through a reshaping transform" guidance in the
+    bblocks-authoring skill's transforms.md.
+    """
+    context = _transform_context(transform_metadata)
+    if context is None:
+        return None
+    base_url = getattr(context, "base_url", None)
+    jsonld_context_path = getattr(context, "jsonld_context_path", None)
+    if not base_url or not jsonld_context_path:
+        return None
+    return urljoin(base_url, jsonld_context_path)
 
 
 class _NamespaceResolvingMap:
@@ -1258,7 +1307,19 @@ def process(input_data, mode="points,edges,faces", objects=None , number=None, t
         context = data["@context"]
         iterable = context if isinstance(context, List) else [context]
         for c in iterable:
-            output_data["@context"].append(c)
+            if c not in output_data["@context"]:
+                output_data["@context"].append(c)
+
+    # Link back to the source bblock's own context last, so it takes term
+    # precedence over the generic FeatureCollection context above -- without
+    # it, CURIE-compacted values (wa-monument-condition:ok etc. -- see
+    # _merge_namespaces) have no term/prefix definitions attached and can't
+    # be expanded back into URIs by a JSON-LD-aware consumer. See
+    # _profile_context_url's docstring for the preview/hosted base_url
+    # handling and the reshaping-transform caveat.
+    profile_context_url = _profile_context_url(transform_metadata)
+    if profile_context_url and profile_context_url not in output_data["@context"]:
+        output_data["@context"].append(profile_context_url)
 
     return json.dumps(output_data, indent=2)
 
@@ -1350,7 +1411,7 @@ def run_transform(input_data=None, transform_metadata=None) -> str:
     ttl_val = transform_metadata.metadata.get("ttl")
     if ttl_val:
         ttl_paths = ttl_val if isinstance(ttl_val, list) else [ttl_val]
-        context = getattr(transform_metadata, "context", None)
+        context = _transform_context(transform_metadata)
         base_dirs = [
             getattr(context, "working_dir", None),
             getattr(context, "bblock_files_path", None),
