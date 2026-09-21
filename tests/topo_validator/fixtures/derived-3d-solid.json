@@ -2172,12 +2172,7 @@
                 "ref": "uuid:de0e7541-5584-42c2-998e-0f8b32ffeb74",
                 "orientation": "+"
               }
-            ]
-          },
-          "properties": {
-            "name": "Solid",
-            "description": "Solid for Lot 800 on Plan DP 431276",
-            "volume": 11143.208,
+            ],
             "relationships": [
               {
                 "href": "uuid:63c654cd-0c9a-496a-aebf-b6cb4a784525",
@@ -2186,6 +2181,11 @@
                 "targetFeatureType": "surv:PrimaryParcel"
               }
             ]
+          },
+          "properties": {
+            "name": "Solid",
+            "description": "Solid for Lot 800 on Plan DP 431276",
+            "volume": 11143.208
           }
         }
       ]
