@@ -57,21 +57,36 @@ def _iter_features(
     collection_name: str,
     excluded_feature_types: set[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Yield dict features from GeoJSON FeatureCollections under *collection_name*.
+    """Yield dict features from *collection_name*, a Topo Feature / 3D CSDM
+    top-level array.
 
-    When *excluded_feature_types* is provided, entire FeatureCollections, whose
-    ``featureType`` is in the set, are skipped.
+    Per the `topo-feature-multi-collection` schema, each array item is
+    itself `oneOf` two shapes, and both are handled here:
+
+    * a bare Feature (``type: "Feature"``) directly -- yielded as-is; or
+    * a FeatureCollection wrapper (``type: "FeatureCollection"``) -- its
+      nested ``features`` array is yielded, as before.
+
+    When *excluded_feature_types* is provided, entire FeatureCollection
+    wrappers whose ``featureType`` is in the set are skipped. This is a
+    FeatureCollection-level filter with no bare-Feature equivalent (a bare
+    Feature carries no collection-level ``featureType`` to check), so a bare
+    Feature is never excluded by it.
     """
-    for collection in data.get(collection_name, []):
-        if not isinstance(collection, dict):
+    for entry in data.get(collection_name, []):
+        if not isinstance(entry, dict):
+            continue
+
+        if entry.get("type") == "Feature":
+            yield entry
             continue
 
         if excluded_feature_types is not None:
-            feature_type = collection.get("featureType")
+            feature_type = entry.get("featureType")
             if isinstance(feature_type, str) and feature_type in excluded_feature_types:
                 continue
 
-        features = collection.get("features", [])
+        features = entry.get("features", [])
         if not isinstance(features, list):
             continue
 
@@ -451,14 +466,22 @@ def _build_parcel_surfaces(
     skipped.
 
     A built surface also carries `feature_type`, copied from its parcel
-    FeatureCollection's own `featureType` (e.g. `"PrimaryParcel"`) rather
-    than from the feature itself -- CSDM carries the type at the collection
-    level, the same place `_iter_features`'s `excluded_feature_types` reads
-    it from. This is a plain, un-prefixed string (e.g. `"PrimaryParcel"`,
-    not a qname like `"surv:PrimaryParcel"`), matching how `featureType` is
-    written everywhere else in a CSDM document; a declared relationship's
-    `targetFeatureType` is expected to match this exactly (see
-    `conformance.cc07_containment`).
+    FeatureCollection wrapper's own `featureType` (e.g. `"PrimaryParcel"`)
+    rather than from the feature itself -- CSDM carries the type at the
+    collection level, the same place `_iter_features`'s
+    `excluded_feature_types` reads it from. This is a plain, un-prefixed
+    string (e.g. `"PrimaryParcel"`, not a qname like `"surv:PrimaryParcel"`),
+    matching how `featureType` is written everywhere else in a CSDM
+    document; a declared relationship's `targetFeatureType` is expected to
+    match this exactly (see `conformance.cc07_containment`).
+
+    Per the `topo-feature-multi-collection` schema, `data["parcels"]`'s
+    items are `oneOf` a bare Feature directly or a FeatureCollection
+    wrapper, the same two shapes `_iter_features` handles -- both are
+    accepted here too. A bare parcel Feature has no enclosing collection to
+    carry a `featureType`, so its resulting surface has no `feature_type` at
+    all (rather than guessing one); a rule keyed off `feature_type` (TR-28,
+    TR-29) simply won't activate for it.
 
     Args:
         data: Parsed Topo Feature / 3D CSDM JSON object.
@@ -476,58 +499,65 @@ def _build_parcel_surfaces(
     """
     surfaces: list[Surface] = []
 
-    for collection in data.get("parcels", []):
-        if not isinstance(collection, dict):
+    def _append_surface(feature: Any, feature_type: Any) -> None:
+        if not isinstance(feature, dict):
+            return
+
+        feature_id = feature.get("id")
+        if not isinstance(feature_id, str):
+            return
+
+        topology = feature.get("topology")
+        if not isinstance(topology, dict) or topology.get("type") != "Polygon":
+            return
+
+        raw_rings = topology.get("references")
+        if not isinstance(raw_rings, list):
+            return
+
+        rings: list[Ring] = []
+        for curve_ids in raw_rings:
+            if not isinstance(curve_ids, list) or not all(
+                isinstance(curve_id, str) for curve_id in curve_ids
+            ):
+                continue
+
+            is_hole = bool(rings)
+            chained_members = _chain_ring_curve_orientations(curve_ids, curves)
+            canonical_members = _canonicalize_ring_winding(
+                chained_members, curves, points, expect_ccw=not is_hole
+            )
+
+            rings.append(
+                {
+                    "type": "inner" if is_hole else "outer",
+                    "members": canonical_members,
+                }
+            )
+
+        if not rings:
+            return
+
+        surface: Surface = {"id": feature_id, "rings": rings}
+        if isinstance(feature_type, str):
+            surface["feature_type"] = feature_type
+        surfaces.append(surface)
+
+    for entry in data.get("parcels", []):
+        if not isinstance(entry, dict):
             continue
 
-        feature_type = collection.get("featureType")
-        features = collection.get("features", [])
+        if entry.get("type") == "Feature":
+            _append_surface(entry, None)
+            continue
+
+        feature_type = entry.get("featureType")
+        features = entry.get("features", [])
         if not isinstance(features, list):
             continue
 
         for feature in features:
-            if not isinstance(feature, dict):
-                continue
-
-            feature_id = feature.get("id")
-            if not isinstance(feature_id, str):
-                continue
-
-            topology = feature.get("topology")
-            if not isinstance(topology, dict) or topology.get("type") != "Polygon":
-                continue
-
-            raw_rings = topology.get("references")
-            if not isinstance(raw_rings, list):
-                continue
-
-            rings: list[Ring] = []
-            for curve_ids in raw_rings:
-                if not isinstance(curve_ids, list) or not all(
-                    isinstance(curve_id, str) for curve_id in curve_ids
-                ):
-                    continue
-
-                is_hole = bool(rings)
-                chained_members = _chain_ring_curve_orientations(curve_ids, curves)
-                canonical_members = _canonicalize_ring_winding(
-                    chained_members, curves, points, expect_ccw=not is_hole
-                )
-
-                rings.append(
-                    {
-                        "type": "inner" if is_hole else "outer",
-                        "members": canonical_members,
-                    }
-                )
-
-            if not rings:
-                continue
-
-            surface: Surface = {"id": feature_id, "rings": rings}
-            if isinstance(feature_type, str):
-                surface["feature_type"] = feature_type
-            surfaces.append(surface)
+            _append_surface(feature, feature_type)
 
     return surfaces
 
