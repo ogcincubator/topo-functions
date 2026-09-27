@@ -792,6 +792,75 @@ def _excluded_from_3d_validation_issue(category: str, excluded_ids: list[str]) -
     )
 
 
+GEOMETRY_TIER_NOT_TESTED_CODE = "GEOMETRY_TIER_NOT_TESTED"
+
+# Each conformance class's rules are only meaningful once the geometry tier
+# they operate over actually has content -- a class whose target tier is
+# empty either trivially finds nothing (a silent, indistinguishable-from-
+# "checked and clean" pass) or, for CC-04's TR-18, actively misfires: a
+# faces-only dataset with no shells at all has every face flagged
+# DANGLING_FACE, since no shell exists to reference any of them. Gating each
+# class on its tier fixes that false-failure case and, for every other
+# class, replaces a silent no-op with an explicit, non-silent notice.
+CONFORMANCE_CLASS_REQUIRED_TIER = {
+    "CC-01": "points",
+    "CC-02": "curves",
+    "CC-03": "surfaces",
+    "CC-04": "shells",
+    "CC-05": "solids",
+    "CC-06": "solids",
+    "CC-07": "solids",
+}
+
+
+def _has_shells(topology: TopologyData) -> bool:
+    """True when at least one Shell exists anywhere in *topology*.
+
+    "shells" has no top-level key of its own in the internal shape -- a
+    shell is either embedded in a solid's own `shells` field, or, for a
+    surface-only shell not owned by any solid, recorded only in
+    `surface_shell_face_refs`. Checking both is needed for full coverage:
+    `loader._build_surface_shell_face_refs` records every declared shell's
+    faces there (whether or not a solid also claims it) when a document is
+    loaded through `from_csdm_json`, but a hand-built internal `TopologyData`
+    (as many tests construct directly, bypassing the loader) may set a
+    solid's own `shells` field without ever populating
+    `surface_shell_face_refs` at all.
+    """
+    return bool(topology.get("surface_shell_face_refs")) or any(
+        solid.get("shells") for solid in topology.get("solids", [])
+    )
+
+
+def _present_geometry_tiers(topology: TopologyData) -> dict[str, bool]:
+    """Return which geometry tiers actually have content in *topology*.
+
+    Each tier is read directly off the already-built internal topology --
+    no re-inspection of the raw CSDM document is needed.
+    """
+    return {
+        "points": bool(topology.get("points")),
+        "curves": bool(topology.get("curves")),
+        "surfaces": bool(topology.get("surfaces")),
+        "shells": _has_shells(topology),
+        "solids": bool(topology.get("solids")),
+    }
+
+
+def _not_tested_issue(label: str, rule_ids: list[str], reason: str) -> Issue:
+    """Build a summarized, non-silent notice that *rule_ids* were not run.
+
+    One issue per skipped group (a conformance class, or TR-28/TR-29 as a
+    pair) rather than per rule, mirroring `_excluded_from_3d_validation_issue`.
+    """
+    rules_text = ", ".join(rule_ids)
+    return warn(
+        GEOMETRY_TIER_NOT_TESTED_CODE,
+        f"{label} ({rules_text}) not tested -- {reason}.",
+        extra={"rule_ids": rule_ids, "reason": reason},
+    )
+
+
 def _dimensionality_exclusion_issues(excluded_solid_ids: set[str]) -> list[Issue]:
     """Build a summarized, non-silent notice for solids excluded from 3D validation.
 
@@ -994,6 +1063,8 @@ def validate_topology(
             f"({len(dimensionality_issues) + len(exclusion_issues) + len(two_dimensional_rule_issues)} issue(s))"
         )
 
+    present_tiers = _present_geometry_tiers(topology_3d)
+
     selected = set(conformance_classes or [])
 
     for cc in CONFORMANCE_CLASSES:
@@ -1001,6 +1072,26 @@ def validate_topology(
             continue
 
         class_label = f"{cc.CONFORMANCE_CLASS_ID} {cc.CONFORMANCE_CLASS_NAME}"
+        required_tier = CONFORMANCE_CLASS_REQUIRED_TIER.get(cc.CONFORMANCE_CLASS_ID)
+
+        if required_tier is not None and not present_tiers[required_tier]:
+            if progress is not None:
+                progress(f"Skipping {class_label}: no {required_tier} present")
+            # CC-07 lists TR-28/TR-29 in RULE_IDS for reporting completeness,
+            # but those two are executed separately below with their own,
+            # more specific applicability gate -- RULE_IDS_RUN_BY_VALIDATE
+            # (when a class defines it) is the subset this class's own
+            # validate() actually runs, so this notice doesn't also claim
+            # TR-28/TR-29 were skipped for the same reason.
+            reported_rule_ids = getattr(cc, "RULE_IDS_RUN_BY_VALIDATE", cc.RULE_IDS)
+            issues.append(
+                _not_tested_issue(
+                    class_label,
+                    reported_rule_ids,
+                    f"no {required_tier} present in this dataset",
+                )
+            )
+            continue
 
         if progress is not None:
             progress(f"Running {class_label}")
@@ -1017,21 +1108,55 @@ def validate_topology(
             validate_declared_parcel_containment,
         )
 
-        if progress is not None:
-            progress("Running CC-07 declared parcel-relationship checks (TR-28/TR-29)")
-
-        parcel_relationship_issues = validate_declared_parcel_containment(
-            topology_3d, topology_2d
+        parcel_relationship_label = (
+            "TR-28/TR-29 declared parcel-relationship checks"
         )
-        parcel_relationship_issues.extend(
-            validate_declared_easement_burden(topology_3d, topology_2d)
-        )
-        issues.extend(parcel_relationship_issues)
 
-        if progress is not None:
-            progress(
-                "Completed CC-07 declared parcel-relationship checks "
-                f"({len(parcel_relationship_issues)} issue(s))"
+        if not present_tiers["solids"]:
+            # A genuine geometry-tier absence -- the same category as every
+            # other GEOMETRY_TIER_NOT_TESTED notice above -- so it gets one
+            # too: the dataset may well intend cadastral relationships, it
+            # just has no solids yet for them to attach to.
+            #
+            # "No PrimaryParcel surfaces declared" is deliberately *not*
+            # gated the same way: that's not a missing geometry tier, it's
+            # cadastral parcel content being out of scope for this dataset
+            # entirely -- the same situation TR-20/TR-21 are already silent
+            # about when there are no easements/thematic solids to check.
+            # `validate_declared_parcel_containment`/`_easement_burden`
+            # already handle that case correctly on their own (see their
+            # docstrings: a plain geometry fixture with no parcel content
+            # produces no findings, rather than every solid being flagged
+            # for a relationship it was never meant to declare) -- flagging
+            # it again here would misreport the overwhelmingly common case
+            # of an ordinary, non-cadastral file as something left untested.
+            if progress is not None:
+                progress(
+                    f"Skipping {parcel_relationship_label}: no solids present"
+                )
+            issues.append(
+                _not_tested_issue(
+                    parcel_relationship_label,
+                    ["TR-28", "TR-29"],
+                    "no solids present in this dataset",
+                )
             )
+        else:
+            if progress is not None:
+                progress(f"Running {parcel_relationship_label}")
+
+            parcel_relationship_issues = validate_declared_parcel_containment(
+                topology_3d, topology_2d
+            )
+            parcel_relationship_issues.extend(
+                validate_declared_easement_burden(topology_3d, topology_2d)
+            )
+            issues.extend(parcel_relationship_issues)
+
+            if progress is not None:
+                progress(
+                    f"Completed {parcel_relationship_label} "
+                    f"({len(parcel_relationship_issues)} issue(s))"
+                )
 
     return issues

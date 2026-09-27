@@ -11,7 +11,7 @@ from typing import Literal, TypedDict
 
 from .model import Issue, errors_only
 
-RuleStatus = Literal["PASS", "WARN", "FAIL"]
+RuleStatus = Literal["PASS", "WARN", "FAIL", "NOT_TESTED"]
 
 STRUCTURE_CLASS = "Structure"
 POINT_RULES_CLASS = "Point Rules"
@@ -28,6 +28,7 @@ HTML_REPORT_STYLE = """
   --ok: #157347;
   --warn: #b58100;
   --fail: #b02a37;
+  --not-tested: #57606a;
   --border: #d0d7de;
   --muted: #57606a;
   --bg: #f6f8fa;
@@ -123,6 +124,10 @@ thead th {
 .fail,
 .error {
   background: var(--fail);
+}
+
+.not_tested {
+  background: var(--not-tested);
 }
 
 .empty-state {
@@ -334,6 +339,7 @@ TWO_D_APPLICABLE_RULE_IDS = frozenset(
 )
 
 EXCLUDED_FROM_3D_VALIDATION_CODE = "EXCLUDED_FROM_3D_VALIDATION"
+GEOMETRY_TIER_NOT_TESTED_CODE = "GEOMETRY_TIER_NOT_TESTED"
 
 
 def _issues_for_rule(issues: list[Issue], issue_codes: set[str]) -> list[Issue]:
@@ -344,8 +350,19 @@ def _issues_for_rule(issues: list[Issue], issue_codes: set[str]) -> list[Issue]:
     ]
 
 
-def _rule_status(issues_for_rule: list[Issue], errors_for_rule: list[Issue]) -> RuleStatus:
-    """Return the report status for a rule from its matching issues."""
+def _rule_status(
+    issues_for_rule: list[Issue], errors_for_rule: list[Issue], not_tested: bool
+) -> RuleStatus:
+    """Return the report status for a rule from its matching issues.
+
+    A rule whose conformance class was skipped for lack of the geometry
+    tier it depends on (see `validator._present_geometry_tiers`) is
+    `NOT_TESTED` regardless of its (necessarily empty) issue list -- it
+    must never render as an indistinguishable `PASS`, which is exactly the
+    ambiguity `GEOMETRY_TIER_NOT_TESTED` notices exist to resolve.
+    """
+    if not_tested:
+        return "NOT_TESTED"
     if errors_for_rule:
         return "FAIL"
     if issues_for_rule:
@@ -353,7 +370,9 @@ def _rule_status(issues_for_rule: list[Issue], errors_for_rule: list[Issue]) -> 
     return "PASS"
 
 
-def _rule_result(check: RuleCheck, issues_for_rule: list[Issue]) -> RuleResult:
+def _rule_result(
+    check: RuleCheck, issues_for_rule: list[Issue], not_tested: bool = False
+) -> RuleResult:
     """Build a report result for one validation rule."""
     errors_for_rule = errors_only(issues_for_rule)
 
@@ -361,18 +380,31 @@ def _rule_result(check: RuleCheck, issues_for_rule: list[Issue]) -> RuleResult:
         "id": check["id"],
         "name": check["name"],
         "conformanceClass": check["conformanceClass"],
-        "status": _rule_status(issues_for_rule, errors_for_rule),
+        "status": _rule_status(issues_for_rule, errors_for_rule, not_tested),
         "issueCount": len(issues_for_rule),
         "errorCount": len(errors_for_rule),
         "issues": issues_for_rule,
     }
 
 
-def rule_results(issues: list[Issue]) -> list[RuleResult]:
-    """Return pass/fail/warn results for every validation rule.
+def _not_tested_rule_ids(not_tested_issues: list[Issue]) -> frozenset[str]:
+    """Return every rule id named by a `GEOMETRY_TIER_NOT_TESTED` notice."""
+    return frozenset(
+        rule_id
+        for issue in not_tested_issues
+        for rule_id in issue.get("extra", {}).get("rule_ids", [])
+    )
+
+
+def rule_results(
+    issues: list[Issue], not_tested_rule_ids: frozenset[str] = frozenset()
+) -> list[RuleResult]:
+    """Return pass/fail/warn/not-tested results for every validation rule.
 
     Args:
         issues: Validation issues returned by the validator.
+        not_tested_rule_ids: Rule ids a `GEOMETRY_TIER_NOT_TESTED` notice
+            named as skipped -- these render `NOT_TESTED` instead of `PASS`.
 
     Returns:
         One result dictionary per known structure/rule check.
@@ -381,7 +413,9 @@ def rule_results(issues: list[Issue]) -> list[RuleResult]:
 
     for check in RULE_CHECKS:
         issues_for_rule = _issues_for_rule(issues, check["codes"])
-        results.append(_rule_result(check, issues_for_rule))
+        results.append(
+            _rule_result(check, issues_for_rule, check["id"] in not_tested_rule_ids)
+        )
 
     return results
 
@@ -411,11 +445,19 @@ def two_d_rule_results(two_dimensional_issues: list[Issue]) -> list[RuleResult]:
 
 def _partition_issues_by_dimensionality(
     issues: list[Issue],
-) -> tuple[list[Issue], list[Issue], list[Issue]]:
-    """Split *issues* into (main, two_dimensional, excluded) for report grouping.
+) -> tuple[list[Issue], list[Issue], list[Issue], list[Issue]]:
+    """Split *issues* into (main, two_dimensional, excluded, not_tested) for
+    report grouping.
 
     - `excluded`: `EXCLUDED_FROM_3D_VALIDATION` notices -- rendered in their
       own small section, not the main rule-results table.
+    - `not_tested`: `GEOMETRY_TIER_NOT_TESTED` notices -- a conformance
+      class (or TR-28/TR-29) skipped because the geometry tier it depends
+      on (or, for TR-28/TR-29, a declared PrimaryParcel surface) isn't
+      present in this dataset at all. Rendered in its own section rather
+      than the main table, the same way `excluded` is: a class that wasn't
+      run shouldn't render as an indistinguishable PASS in the pass/fail
+      table.
     - `two_dimensional`: issues tagged `extra.dimensionality == "2d"` --
       rendered in their own "2D topology" section instead of being folded
       into the same TR-xx row a 3D finding under the same code would occupy.
@@ -429,16 +471,20 @@ def _partition_issues_by_dimensionality(
     main: list[Issue] = []
     two_dimensional: list[Issue] = []
     excluded: list[Issue] = []
+    not_tested: list[Issue] = []
 
     for issue in issues:
-        if issue.get("code") == EXCLUDED_FROM_3D_VALIDATION_CODE:
+        code = issue.get("code")
+        if code == EXCLUDED_FROM_3D_VALIDATION_CODE:
             excluded.append(issue)
+        elif code == GEOMETRY_TIER_NOT_TESTED_CODE:
+            not_tested.append(issue)
         elif issue.get("extra", {}).get("dimensionality") == "2d":
             two_dimensional.append(issue)
         else:
             main.append(issue)
 
-    return main, two_dimensional, excluded
+    return main, two_dimensional, excluded, not_tested
 
 
 def to_json_report(issues: list[Issue]) -> str:
@@ -457,7 +503,7 @@ def to_json_report(issues: list[Issue]) -> str:
     Returns:
         Pretty-printed JSON report string.
     """
-    main_issues, two_dimensional_issues, excluded_issues = (
+    main_issues, two_dimensional_issues, excluded_issues, not_tested_issues = (
         _partition_issues_by_dimensionality(issues)
     )
 
@@ -466,9 +512,10 @@ def to_json_report(issues: list[Issue]) -> str:
             "valid": len(errors_only(issues)) == 0,
             "issueCount": len(issues),
             "errorCount": len(errors_only(issues)),
-            "ruleResults": rule_results(main_issues),
+            "ruleResults": rule_results(main_issues, _not_tested_rule_ids(not_tested_issues)),
             "twoDimensionalRuleResults": two_d_rule_results(two_dimensional_issues),
             "excludedFromThreeDValidation": excluded_issues,
+            "notTested": not_tested_issues,
             "issues": issues,
         },
         indent=2,
@@ -538,6 +585,16 @@ def _text_excluded_section_lines(excluded_issues: list[Issue]) -> list[str]:
     return lines
 
 
+def _text_not_tested_section_lines(not_tested_issues: list[Issue]) -> list[str]:
+    """Return the "not tested" section, or [] when empty."""
+    if not not_tested_issues:
+        return []
+
+    lines = ["", "Not tested (geometry not present):"]
+    lines.extend(f"- {issue['message']}" for issue in not_tested_issues)
+    return lines
+
+
 def _text_issue_detail_lines(issues: list[Issue]) -> list[str]:
     """Return issue-detail lines for a text validation report."""
     if not issues:
@@ -571,15 +628,16 @@ def to_text_report(issues: list[Issue]) -> str:
     Returns:
         Multi-line validation report.
     """
-    main_issues, two_dimensional_issues, excluded_issues = (
+    main_issues, two_dimensional_issues, excluded_issues, not_tested_issues = (
         _partition_issues_by_dimensionality(issues)
     )
 
     error_count = len(errors_only(issues))
     lines = _text_report_summary(len(issues), error_count)
-    lines.extend(_text_rule_result_lines(rule_results(main_issues)))
+    lines.extend(_text_rule_result_lines(rule_results(main_issues, _not_tested_rule_ids(not_tested_issues))))
     lines.extend(_text_two_d_section_lines(two_dimensional_issues))
     lines.extend(_text_excluded_section_lines(excluded_issues))
+    lines.extend(_text_not_tested_section_lines(not_tested_issues))
     lines.extend(_text_issue_detail_lines(issues))
 
     return "\n".join(lines)
@@ -710,6 +768,28 @@ def _html_excluded_section(excluded_issues: list[Issue]) -> str:
         """
 
 
+def _html_not_tested_section(not_tested_issues: list[Issue]) -> str:
+    """Return the "not tested" section, or "" when empty."""
+    if not not_tested_issues:
+        return ""
+
+    rows = "".join(
+        f"<tr><td>{html.escape(issue['message'])}</td></tr>"
+        for issue in not_tested_issues
+    )
+
+    return f"""
+        <section>
+          <h2>Not tested (geometry not present)</h2>
+          <table>
+            <tbody>
+              {rows}
+            </tbody>
+          </table>
+        </section>
+        """
+
+
 def _html_issue_details(issues: list[Issue]) -> str:
     """Return the issue details section, including an empty state when needed."""
     if not issues:
@@ -758,7 +838,7 @@ def to_html_report(
     Returns:
         Complete standalone HTML report string.
     """
-    main_issues, two_dimensional_issues, excluded_issues = (
+    main_issues, two_dimensional_issues, excluded_issues, not_tested_issues = (
         _partition_issues_by_dimensionality(issues)
     )
 
@@ -828,13 +908,14 @@ def to_html_report(
           </tr>
         </thead>
         <tbody>
-          {_html_rule_rows(rule_results(main_issues))}
+          {_html_rule_rows(rule_results(main_issues, _not_tested_rule_ids(not_tested_issues)))}
         </tbody>
       </table>
     </section>
 
     {_html_two_d_section(two_dimensional_issues)}
     {_html_excluded_section(excluded_issues)}
+    {_html_not_tested_section(not_tested_issues)}
     {_html_issue_details(issues)}
   </main>
 </body>

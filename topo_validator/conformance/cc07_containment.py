@@ -41,6 +41,14 @@ CONFORMANCE_CLASS_NAME = "Containment and host topology"
 # because they need both the 3D and 2D topology views at once -- see
 # `validate_declared_parcel_containment`/`validate_declared_easement_burden`.
 RULE_IDS = ["TR-09", "TR-20", "TR-21", "TR-28", "TR-29"]
+# TR-28/TR-29 are listed in RULE_IDS for reporting completeness (report.py's
+# rule table) but are executed directly by validator.validate_topology, not
+# by this module's own validate() -- see the note above. This is what a
+# geometry-tier "not tested" notice for this class should list instead of
+# RULE_IDS, so a CC-07-level skip doesn't also (mis)claim TR-28/TR-29, which
+# get their own, more specific applicability gate (a declared PrimaryParcel
+# surface, not just solids) and their own separate notice.
+RULE_IDS_RUN_BY_VALIDATE = ["TR-09", "TR-20", "TR-21"]
 
 SECONDARY_PARCEL_TYPES = {"easement", "secondary"}
 THEMATIC_PARCEL_TYPE = "thematic"
