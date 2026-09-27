@@ -136,6 +136,34 @@ def test_faces_only_dataset_skips_shell_and_solid_rules_without_false_failures(u
     }
 
 
+def test_edges_only_dataset_skips_dangling_curve_check_without_false_failures():
+    """Points and edges only, no rings/faces/shells/solids at all -- the
+    exact reported scenario (`topo-feature`'s `edges-example.json`: five
+    points, four edges, nothing else). TR-03 must not misfire
+    DANGLING_CURVE for every curve just because nothing in the file was
+    ever going to reference one."""
+    data = {
+        "points": [
+            {"id": "p1", "coordinates": [0.0, 0.0, 0.0]},
+            {"id": "p2", "coordinates": [1.0, 0.0, 0.0]},
+            {"id": "p3", "coordinates": [1.0, 1.0, 0.0]},
+        ],
+        "curves": [
+            {"id": "e1", "vertices": ["p1", "p2"]},
+            {"id": "e2", "vertices": ["p2", "p3"]},
+        ],
+        "surfaces": [],
+        "solids": [],
+    }
+
+    issues = validate_topology(data)
+
+    assert errors_only(issues) == []
+    codes = [issue["code"] for issue in issues]
+    assert "DANGLING_CURVE" not in codes
+    assert "TR-03" in _rule_ids(issues)
+
+
 def test_full_dataset_runs_every_geometry_class_normally(unit_cube):
     """The common case is unaffected: a fully valid cube (points, curves,
     surfaces, and a solid with an embedded shell) has every geometry tier
@@ -183,6 +211,21 @@ def test_declared_relationship_rules_report_not_tested_with_no_solids():
     ]
     assert len(matching) == 1
     assert "no solids present" in matching[0]["message"]
+
+
+def test_surfaces_present_but_a_curve_genuinely_dangling_still_fails(unit_cube):
+    """The TR-03 gate only suppresses the check when surfaces are entirely
+    absent -- a dataset that does declare surfaces, but where a curve is
+    genuinely unreferenced by any of them, must still fail."""
+    orphan_curve = {"id": "orphan-curve", "vertices": ["p0", "p1"]}
+    data = {**unit_cube, "curves": [*unit_cube["curves"], orphan_curve]}
+
+    issues = validate_topology(data)
+
+    assert any(
+        issue["code"] == "DANGLING_CURVE" and issue["object_id"] == "orphan-curve"
+        for issue in issues
+    )
 
 
 def test_report_rule_results_show_not_tested_status_not_a_false_pass(unit_cube):

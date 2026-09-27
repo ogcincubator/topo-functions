@@ -27,6 +27,16 @@ from ..model import (
 CONFORMANCE_CLASS_ID = "CC-02"
 CONFORMANCE_CLASS_NAME = "Curve topology"
 RULE_IDS = ["TR-02", "TR-03", "TR-12", "TR-13", "TR-14", "TR-22"]
+# TR-03 is listed in RULE_IDS for reporting completeness but is executed
+# directly by validator.validate_topology, not by this module's own
+# validate() -- see the note above validate_no_dangling_curves. Unlike its
+# five siblings here, TR-03's own dependency is on *surfaces* (rings/faces
+# reference curves), not curves -- gating it at the CC-02 (curves-present)
+# level would still misfire on a curves-but-no-surfaces dataset, exactly
+# the false DANGLING_CURVE failure this split exists to prevent. This is
+# what a geometry-tier "not tested" notice for this class should list
+# instead of RULE_IDS.
+RULE_IDS_RUN_BY_VALIDATE = ["TR-02", "TR-12", "TR-13", "TR-14", "TR-22"]
 
 CURVE_SELF_INTERSECTION_CODE = "CURVE_SELF_INTERSECTION"
 SegmentIntersection = tuple[int, int]
@@ -160,6 +170,14 @@ def validate_no_dangling_curves(
     Curves referenced exclusively by "vectorObservations" or
     "observedVectors" are exempt; they are recorded in the optional
     "data['observation_curves']" list and skipped by this check.
+
+    Not run via this module's own `validate()` -- called directly by
+    `validator.validate_topology`, gated on surfaces (not curves) being
+    present, since that's what this check's own dependency actually is: a
+    curve can only ever be non-dangling if some surface ring exists to
+    reference it. A curves-but-no-surfaces dataset (e.g. a plain edge
+    network with no rings/faces declared, which is perfectly valid on its
+    own) would otherwise have every curve misreported as dangling.
     """
     issues: list[Issue] = []
     referenced_curve_ids = _referenced_curve_ids(data)
@@ -533,7 +551,6 @@ def validate(data: TopologyData, tolerances: Tolerances | None = None) -> list[I
 
     issues: list[Issue] = []
     issues.extend(validate_curve_no_self_intersection(data))
-    issues.extend(validate_no_dangling_curves(data))
     issues.extend(validate_minimum_curve_length(data, min_length=t.length))
     issues.extend(validate_no_duplicate_curves(data))
     issues.extend(validate_curve_intersection_at_nodes_only(data))

@@ -78,9 +78,10 @@ def test_all_2d_dataset_validate_topology_reports_not_tested_for_3d_classes():
     """TWO_D_TOPOLOGY has no curves/surfaces/solids, and since every point is
     2D, `partition_topology` routes even its points into the 2D view --
     `topology_3d` ends up empty in every tier. Every CC-01..CC-07
-    conformance class (and TR-28/TR-29) is therefore explicitly reported as
-    not tested (`GEOMETRY_TIER_NOT_TESTED`) rather than silently running
-    over nothing and contributing zero issues; the only other issue is the
+    conformance class (and TR-28/TR-29, and TR-03 -- gated separately from
+    the rest of CC-02) is therefore explicitly reported as not tested
+    (`GEOMETRY_TIER_NOT_TESTED`) rather than silently running over nothing
+    and contributing zero issues; the only other issue is the
     NO_3D_TOPOLOGY warning."""
     progress_messages: list[str] = []
     issues = validate_topology(TWO_D_TOPOLOGY, progress=progress_messages.append)
@@ -88,8 +89,8 @@ def test_all_2d_dataset_validate_topology_reports_not_tested_for_3d_classes():
     assert errors_only(issues) == []
     codes = [i["code"] for i in issues]
     assert codes.count("NO_3D_TOPOLOGY") == 1
-    # CC-01..CC-07 (7) plus the TR-28/TR-29 declared-relationship pair (1).
-    assert codes.count("GEOMETRY_TIER_NOT_TESTED") == 8
+    # CC-01..CC-07 (7), TR-28/TR-29 (1), and TR-03 (1).
+    assert codes.count("GEOMETRY_TIER_NOT_TESTED") == 9
     assert not any(m.startswith("Running CC-") for m in progress_messages)
     assert any(m.startswith("Skipping CC-") for m in progress_messages)
 

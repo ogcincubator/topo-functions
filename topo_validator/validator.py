@@ -959,7 +959,13 @@ def _run_2d_applicable_rules(
     issues: list[Issue] = []
     issues.extend(validate_unique_points(topology_2d, tol=tolerances.point))
     issues.extend(validate_point_fabric_consistency(topology_2d))
-    issues.extend(validate_no_dangling_curves(topology_2d))
+    if topology_2d.get("surfaces"):
+        # TR-03's dependency is surfaces (rings/faces reference curves), not
+        # curves -- see cc02_curves.validate_no_dangling_curves. A 2D curve
+        # network with no 2D surfaces at all (the 2D analogue of the 3D
+        # case handled in validate_topology below) would otherwise have
+        # every curve misreported as dangling.
+        issues.extend(validate_no_dangling_curves(topology_2d))
     issues.extend(
         validate_minimum_curve_length(topology_2d, min_length=tolerances.length)
     )
@@ -1101,6 +1107,43 @@ def validate_topology(
 
         if progress is not None:
             progress(f"Completed {class_label} ({len(class_issues)} issue(s))")
+
+    if not selected or "CC-02" in selected:
+        dangling_curve_label = "TR-03 NoDanglingCurves"
+
+        if not present_tiers["surfaces"]:
+            # TR-03's real dependency is surfaces (rings/faces reference
+            # curves), not curves -- see the note on
+            # cc02_curves.validate_no_dangling_curves. Gating it at the
+            # CC-02 (curves-present) level, as every other rule in that
+            # class correctly is, would still misfire on a curves-but-no-
+            # surfaces dataset (e.g. a plain edge network with no rings or
+            # faces declared at all, which is perfectly valid on its own):
+            # every curve would be reported DANGLING_CURVE, since nothing
+            # exists that could ever reference one.
+            if progress is not None:
+                progress(f"Skipping {dangling_curve_label}: no surfaces present")
+            issues.append(
+                _not_tested_issue(
+                    dangling_curve_label,
+                    ["TR-03"],
+                    "no surfaces present in this dataset",
+                )
+            )
+        else:
+            from .conformance.cc02_curves import validate_no_dangling_curves
+
+            if progress is not None:
+                progress(f"Running {dangling_curve_label}")
+
+            dangling_curve_issues = validate_no_dangling_curves(topology_3d)
+            issues.extend(dangling_curve_issues)
+
+            if progress is not None:
+                progress(
+                    f"Completed {dangling_curve_label} "
+                    f"({len(dangling_curve_issues)} issue(s))"
+                )
 
     if not selected or "CC-07" in selected:
         from .conformance.cc07_containment import (
