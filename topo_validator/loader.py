@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from .geometry import polygon_area_vector
 from .model import (
     Curve,
+    MarkedNonParticipatingFace,
     ObservationCurve,
     Orientation,
     Point,
@@ -26,6 +27,19 @@ from .model import (
 )
 
 _ORIENTATION_FLIP: dict[Orientation, Orientation] = {"+": "-", "-": "+"}
+
+# Collection names recognized as observation-curve exemption sources even
+# when their FeatureCollection wrapper carries no explicit `topologyRole`
+# marker. Kept for backward compatibility with existing cadastral-survey
+# CSDM documents; any other collection can opt in to the same treatment by
+# setting `topologyRole: "nonParticipating"` on its wrapper (see
+# `_marked_observation_curve_collection_names`).
+DEFAULT_OBSERVATION_CURVE_SOURCES = {"observedVectors", "vectorObservations"}
+
+# Value of the `topologyRole` marker that opts a FeatureCollection or
+# Feature into the non-participating exemption (observation curves at the
+# collection level, individual faces at the feature level).
+NON_PARTICIPATING_TOPOLOGY_ROLE = "nonParticipating"
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
@@ -875,48 +889,129 @@ def _build_solids(data: dict[str, Any], shell_map: dict[str, Shell]) -> list[Sol
     return solids
 
 
-def _build_observation_curves(data: dict[str, Any]) -> list[ObservationCurve]:
+def _marked_observation_curve_collection_names(data: dict[str, Any]) -> set[str]:
+    """Return top-level collection keys explicitly marked as observation-curve
+    sources via `topologyRole: "nonParticipating"` on their FeatureCollection
+    wrapper.
+
+    This lets a use case outside cadastral surveying name its own supporting
+    geometry collection anything it likes (e.g. "siteObservationVectors"),
+    and opt it into the same curve-dangling exemption that
+    "observedVectors"/"vectorObservations" get by default, without those two
+    cadastral-specific names being the only ones ever recognized. A bare
+    Feature (no FeatureCollection wrapper) carries no collection-level
+    marker to check, so only wrapped collections are considered here.
+    """
+    names: set[str] = set()
+
+    for key, entries in data.items():
+        if not isinstance(entries, list):
+            continue
+
+        for entry in entries:
+            if (
+                isinstance(entry, dict)
+                and entry.get("type") == "FeatureCollection"
+                and entry.get("topologyRole") == NON_PARTICIPATING_TOPOLOGY_ROLE
+            ):
+                names.add(key)
+                break
+
+    return names
+
+
+def _build_observation_curves(
+    data: dict[str, Any],
+    *,
+    extra_observation_curve_sources: set[str] | None = None,
+) -> list[ObservationCurve]:
     """Build observation curve exemption records from CSDM observation features.
 
-    Collects curve references from "observedVectors" and
-    "vectorObservations" so dangling-curve validation can exempt supporting
-    observation geometry. Observation features without string references are
+    Collects curve references from every recognized observation-curve
+    source collection so dangling-curve validation can exempt supporting
+    observation geometry. A source collection is recognized if it is one of
+    the cadastral-survey defaults ("observedVectors", "vectorObservations"),
+    is explicitly marked `topologyRole: "nonParticipating"` on its
+    FeatureCollection wrapper, or is named in
+    *extra_observation_curve_sources*. Each recognized collection is read
+    using both known observation-feature shapes (a single `topology.ref`,
+    and a `topology.directed_references[].ref` list) since a non-default
+    collection may use either; features without string references are
     skipped.
+
+    Args:
+        data: Parsed Topo Feature / 3D CSDM JSON object.
+        extra_observation_curve_sources: Additional collection names to
+            recognize, on top of the defaults and any marked collections.
+            Extends rather than replaces the default set.
+
+    Returns:
+        Observation curve records with "ref" and "source" fields.
+    """
+    source_names = (
+        DEFAULT_OBSERVATION_CURVE_SOURCES
+        | _marked_observation_curve_collection_names(data)
+        | (extra_observation_curve_sources or set())
+    )
+
+    observation_curves: list[ObservationCurve] = []
+
+    for source_name in source_names:
+        for feature in _iter_features(data, source_name):
+            topology = feature.get("topology", {})
+            ref = topology.get("ref") if isinstance(topology, dict) else None
+            if isinstance(ref, str):
+                observation_curves.append(
+                    {
+                        "ref": ref,
+                        "source": source_name,
+                    }
+                )
+
+            for ref_obj in _topology_list(feature, "directed_references"):
+                if not isinstance(ref_obj, dict):
+                    continue
+
+                ref = ref_obj.get("ref")
+                if isinstance(ref, str):
+                    observation_curves.append(
+                        {
+                            "ref": ref,
+                            "source": source_name,
+                        }
+                    )
+
+    return observation_curves
+
+
+def _build_marked_non_participating_faces(
+    data: dict[str, Any],
+) -> list[MarkedNonParticipatingFace]:
+    """Build face exemption records from individually marked face features.
+
+    A face feature in the "faces" collection whose own `properties.topologyRole`
+    is "nonParticipating" is exempt from the dangling-face check regardless
+    of whether any shell references it -- generalizing the shell-derived
+    exemption (`_build_surface_shell_face_refs`) to faces that intentionally
+    have no enclosing shell at all. Faces without a string "id" are skipped.
 
     Args:
         data: Parsed Topo Feature / 3D CSDM JSON object.
 
     Returns:
-        Observation curve records with "ref" and "source" fields.
+        Face reference records with a "ref" field.
     """
-    observation_curves: list[ObservationCurve] = []
+    faces: list[MarkedNonParticipatingFace] = []
 
-    for feature in _iter_features(data, "observedVectors"):
-        topology = feature.get("topology", {})
-        ref = topology.get("ref") if isinstance(topology, dict) else None
-        if isinstance(ref, str):
-            observation_curves.append(
-                {
-                    "ref": ref,
-                    "source": "observedVectors",
-                }
-            )
+    for feature in _iter_features(data, "faces"):
+        face_id = feature.get("id")
+        properties = feature.get("properties")
+        role = properties.get("topologyRole") if isinstance(properties, dict) else None
 
-    for feature in _iter_features(data, "vectorObservations"):
-        for ref_obj in _topology_list(feature, "directed_references"):
-            if not isinstance(ref_obj, dict):
-                continue
+        if isinstance(face_id, str) and role == NON_PARTICIPATING_TOPOLOGY_ROLE:
+            faces.append({"ref": face_id})
 
-            ref = ref_obj.get("ref")
-            if isinstance(ref, str):
-                observation_curves.append(
-                    {
-                        "ref": ref,
-                        "source": "vectorObservations",
-                    }
-                )
-
-    return observation_curves
+    return faces
 
 
 def _build_surface_shell_face_refs(
@@ -948,15 +1043,26 @@ def _build_surface_shell_face_refs(
     ]
 
 
-def from_csdm_json(data: dict[str, Any]) -> TopologyData:
+def from_csdm_json(
+    data: dict[str, Any],
+    *,
+    extra_observation_curve_sources: set[str] | None = None,
+) -> TopologyData:
     """Convert Topo Feature / 3D CSDM JSON to internal topology data.
 
     Args:
         data: Parsed Topo Feature / 3D CSDM JSON object.
+        extra_observation_curve_sources: Additional collection names to
+            recognize as observation-curve exemption sources, for callers
+            who cannot add a `topologyRole: "nonParticipating"` marker to
+            their own documents. Extends rather than replaces the defaults
+            ("observedVectors", "vectorObservations") and any collections
+            marked directly in *data*.
 
     Returns:
         Internal topology data with points, curves, surfaces, solids,
-        observation curve references, and surface shell face references.
+        observation curve references, surface shell face references, and
+        individually marked non-participating faces.
     """
     ring_map = _build_ring_map(data)
     shell_map = _build_shell_map(data)
@@ -973,8 +1079,11 @@ def from_csdm_json(data: dict[str, Any]) -> TopologyData:
             + _build_parcel_surfaces(data, curve_map, point_map)
         ),
         "solids": _build_solids(data, shell_map),
-        "observation_curves": _build_observation_curves(data),
+        "observation_curves": _build_observation_curves(
+            data, extra_observation_curve_sources=extra_observation_curve_sources
+        ),
         "surface_shell_face_refs": _build_surface_shell_face_refs(shell_map),
+        "marked_non_participating_faces": _build_marked_non_participating_faces(data),
     }
 
 
