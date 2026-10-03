@@ -138,7 +138,23 @@ The 3D coplanarity test ensures that curves on separate building levels whose XY
 **Error code:** `DANGLING_CURVE`
 Every curve used as a boundary edge in a parcel or solid topology must be referenced by at least one surface ring.
 A boundary curve not used by any surface ring is topologically orphaned and cannot contribute to a valid solid boundary.
-This test does not apply to curves included only as survey, abuttal, observation, or other supporting geometry: curves in the `observedVectors` and `vectorObservations` collections are exempt by default, and any other collection can opt into the same exemption by setting `topologyRole: "nonParticipating"` on its FeatureCollection wrapper (see `loader._build_observation_curves`) — this generalizes the exemption beyond those two cadastral-survey-specific collection names to any domain's own supporting curve geometry.
+This test does not apply to curves included only as survey, abuttal, observation, or other supporting geometry: curves in the `observedVectors` and `vectorObservations` collections are exempt by default, and any other collection can opt into the same exemption by setting `topologyRole: "nonParticipating"` on its FeatureCollection wrapper (see `loader._build_observation_curves`) — this generalizes the exemption beyond those two cadastral-survey-specific collection names to any domain's own supporting curve geometry. Example — exempts `curve-7`:
+
+```json
+{
+  "siteObservationVectors": [
+    {
+      "type": "FeatureCollection",
+      "featureType": "siteObservationVectors",
+      "topologyRole": "nonParticipating",
+      "features": [
+        { "id": "obs-1", "type": "Feature", "topology": { "ref": "curve-7" } }
+      ]
+    }
+  ]
+}
+```
+
 Called directly by `validator.validate_topology` (not via CC-02's own `validate()`), gated on `surfaces` being present rather than `curves` — see the "Partial datasets" note above for why.
 
 #### TR-22 — CurveNoRepeatInRing
@@ -212,7 +228,20 @@ The test does not require the surface to be square; it only requires consistent 
 **Error code:** `DANGLING_FACE`
 Every surface used as a boundary face of a solid must be referenced by at least one solid shell.
 A boundary face that no solid shell owns is topologically orphaned and cannot contribute to a valid closed shell.
-This test does not apply to terrain or other supporting surface geometry not intended to participate in solid topology: a face belonging to any CSDM shell (e.g. a surface-only ground shell) is exempt, and an individual face can additionally be exempted on its own, independent of shell membership, by setting `topologyRole: "nonParticipating"` on its own feature's `properties` (see `loader._build_marked_non_participating_faces`).
+This test does not apply to terrain or other supporting surface geometry not intended to participate in solid topology: a face belonging to any CSDM shell (e.g. a surface-only ground shell) is exempt, and an individual face can additionally be exempted on its own, independent of shell membership, by setting `topologyRole: "nonParticipating"` on its own feature's `properties` (see `loader._build_marked_non_participating_faces`). Example — exempts `face-3` even though it belongs to no shell:
+
+```json
+{
+  "faces": [
+    {
+      "id": "face-3",
+      "type": "Feature",
+      "topology": { "type": "Face", "directed_references": [] },
+      "properties": { "topologyRole": "nonParticipating" }
+    }
+  ]
+}
+```
 
 #### TR-06 — ClosedSolid
 **Function:** `validate_closed_solid(data)`
