@@ -9,6 +9,11 @@
 # script sets PROJ_DATA, which pyproj needs to find proj.db.
 name: topo-functions
 
+# Ignore pip --user packages (%APPDATA%\Python\Python312 on Windows): Python
+# otherwise puts them ahead of this environment's own, and old ones broke pytest.
+variables:
+  PYTHONNOUSERSITE: "1"
+
 channels:
   - conda-forge
   - nodefaults
