@@ -1,0 +1,27 @@
+# Conda environment for topo-functions.
+#
+# Create with:
+#   conda env create -f environment.yml
+# Run the tests from the repository root:
+#   conda run -n topo-functions python -m pytest
+#
+# conda-forge only: pyproj ships compiled PROJ binaries, and its activation
+# script sets PROJ_DATA, which pyproj needs to find proj.db.
+name: topo-functions
+
+channels:
+  - conda-forge
+  - nodefaults
+
+dependencies:
+  - python=3.12
+  # Mirrors pyproject.toml.
+  - pyproj>=3.5
+  - rdflib>=6.0
+  - numpy>=1.21
+  - pytest>=7.0
+  - pip
+  - pip:
+      # splines comes from PyPI with the package, which is installed in editable
+      # mode so tests import the working tree.
+      - -e .[test]
