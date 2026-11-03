@@ -36,7 +36,7 @@ REFERENCED_OBJECTS_TTL = TOPO_FEATURE / "_sources" / "examples" / "referenced-ob
 
 
 def _persist(name: str, geojson_str: str) -> None:
-    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str)
+    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str, encoding="utf-8", newline="\n")
 
 
 def _dist(a, b):

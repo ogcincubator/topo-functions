@@ -115,7 +115,9 @@ def test_load_topo_resolves_parcel_polygon_by_chaining_edges():
     assert len(ring) == 7               # 6 boundary vertices + closing point
 
     RDF_OUTPUT_DIR.joinpath("parcel-8446454.geojson").write_text(
-        json.dumps({"type": "Feature", "id": "8446454", "geometry": parcel}, indent=2)
+        json.dumps({"type": "Feature", "id": "8446454", "geometry": parcel}, indent=2),
+        encoding="utf-8",
+        newline="\n",
     )
 
 

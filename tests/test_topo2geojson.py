@@ -108,7 +108,7 @@ def _point_feature(ref: str, context=None) -> dict:
 
 
 def _persist(name: str, geojson_str: str) -> None:
-    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str)
+    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str, encoding="utf-8", newline="\n")
 
 
 def test_cube_with_void_faces_are_self_contained_no_ttl_needed():

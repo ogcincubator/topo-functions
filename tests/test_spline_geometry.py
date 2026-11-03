@@ -32,7 +32,7 @@ TANGENT_SPLINE = [P1, Px1, Px2, Px3, P2]
 
 
 def _persist(name: str, geojson_str: str) -> None:
-    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str)
+    JSON_OUTPUT_DIR.joinpath(name).write_text(geojson_str, encoding="utf-8", newline="\n")
 
 
 def _unit(v):
