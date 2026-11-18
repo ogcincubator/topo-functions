@@ -373,6 +373,16 @@ def _surface_shell_face_ids(data: TopologyData) -> set[str]:
     }
 
 
+def _marked_non_participating_face_ids(data: TopologyData) -> set[str]:
+    """Return face ids explicitly marked non-participating via their own
+    `topologyRole` property, independent of any shell membership.
+    """
+    return {
+        entry["ref"]
+        for entry in data.get("marked_non_participating_faces", [])
+    }
+
+
 def _dangling_face_issue(surface_id: str) -> Issue:
     """Create a TR-18 issue for a surface that is not owned by any solid."""
     return err(
@@ -392,10 +402,13 @@ def validate_no_dangling_faces(
     A face that no solid owns and that no shell references cannot form part
     of any closed shell and is topologically orphaned. Faces recorded in
     ``data['surface_shell_face_refs']`` are exempt because they belong to a
-    surface-only shell (e.g. a ground surface).
+    surface-only shell (e.g. a ground surface). Faces recorded in
+    ``data['marked_non_participating_faces']`` are exempt independently of
+    shell membership, because their own feature explicitly declared
+    ``topologyRole: "nonParticipating"``.
     """
     referenced_faces = _referenced_face_ids(data)
-    exempt_faces = _surface_shell_face_ids(data)
+    exempt_faces = _surface_shell_face_ids(data) | _marked_non_participating_face_ids(data)
     issues: list[Issue] = []
 
     for surface in data.get("surfaces", []):

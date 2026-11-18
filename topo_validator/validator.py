@@ -22,7 +22,6 @@ from .model import (
 
 REQUIRED_COLLECTIONS = ("points", "curves", "surfaces", "solids")
 ORIENTATIONS = {"+", "-"}
-OBSERVATION_CURVE_SOURCES = {"observedVectors", "vectorObservations"}
 RELATIONSHIP_ID_FIELDS = ("parent_id", "servient_id", "burdened_id", "host_id")
 SHELL_TYPES = {"outer", "inner"}
 
@@ -186,6 +185,7 @@ def validate_structure(data: Mapping[str, Any]) -> list[Issue]:
     issues.extend(_validate_solids_structure(data["solids"]))
     issues.extend(_validate_observation_curves_structure(data))
     issues.extend(_validate_surface_shell_face_refs_structure(data))
+    issues.extend(_validate_marked_non_participating_faces_structure(data))
 
     return issues
 
@@ -655,7 +655,14 @@ def _validate_solid_shell_structure(
 
 
 def _validate_observation_curves_structure(data: Mapping[str, Any]) -> list[Issue]:
-    """Validate optional observation curve exemption records."""
+    """Validate optional observation curve exemption records.
+
+    `source` is a free-form provenance tag (the collection it was read
+    from), not a closed vocabulary -- any collection explicitly marked
+    `topologyRole: "nonParticipating"`, not just the cadastral-survey
+    defaults "observedVectors"/"vectorObservations", can produce one of
+    these records. Only its shape is validated here.
+    """
     observation_curves = data.get("observation_curves", [])
 
     if not isinstance(observation_curves, list):
@@ -695,11 +702,11 @@ def _validate_observation_curves_structure(data: Mapping[str, Any]) -> list[Issu
             )
 
         source = observation_curve.get("source")
-        if source not in OBSERVATION_CURVE_SOURCES:
+        if not isinstance(source, str) or not source:
             issues.append(
                 err(
                     "INVALID_OBSERVATION_CURVE_SOURCE",
-                    f"{path}.source must be 'observedVectors' or 'vectorObservations'",
+                    f"{path}.source must be a non-empty string",
                     path=f"{path}.source",
                     extra={"actual_value": source},
                 )
@@ -758,6 +765,51 @@ def _validate_surface_shell_face_refs_structure(
                     f"{path}.shell_id must be a string",
                     path=f"{path}.shell_id",
                     extra={"actual_type": type(shell_id).__name__},
+                )
+            )
+
+    return issues
+
+
+def _validate_marked_non_participating_faces_structure(
+    data: Mapping[str, Any],
+) -> list[Issue]:
+    """Validate optional individually-marked non-participating face records."""
+    marked_faces = data.get("marked_non_participating_faces", [])
+
+    if not isinstance(marked_faces, list):
+        return [
+            err(
+                "INVALID_MARKED_NON_PARTICIPATING_FACES",
+                "marked_non_participating_faces must be a list when present",
+                path="marked_non_participating_faces",
+                extra={"actual_type": type(marked_faces).__name__},
+            )
+        ]
+
+    issues: list[Issue] = []
+    for index, marked_face in enumerate(marked_faces):
+        path = f"marked_non_participating_faces[{index}]"
+
+        if not isinstance(marked_face, dict):
+            issues.append(
+                err(
+                    "INVALID_MARKED_NON_PARTICIPATING_FACE",
+                    f"{path} must be an object",
+                    path=path,
+                    extra={"actual_type": type(marked_face).__name__},
+                )
+            )
+            continue
+
+        ref = marked_face.get("ref")
+        if not isinstance(ref, str):
+            issues.append(
+                err(
+                    "INVALID_MARKED_NON_PARTICIPATING_FACE_REF",
+                    f"{path}.ref must be a string",
+                    path=f"{path}.ref",
+                    extra={"actual_type": type(ref).__name__},
                 )
             )
 

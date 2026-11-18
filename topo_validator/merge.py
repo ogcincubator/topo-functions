@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .model import (
     Curve,
+    MarkedNonParticipatingFace,
     ObservationCurve,
     Point,
     Solid,
@@ -30,7 +31,8 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
     source (e.g. an inline CSDM override of an RDF-supplied default).
     Observation-curve exemptions are deduplicated by (ref, source) and
     surface shell face references by (ref, shell_id) instead, since neither
-    has an id of its own.
+    has an id of its own. Marked non-participating faces are deduplicated by
+    ref alone, since a face is either marked or not.
     """
     points: dict[str, Point] = {}
     curves: dict[str, Curve] = {}
@@ -40,6 +42,8 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
     seen_observation_refs: set[tuple[str, str]] = set()
     surface_shell_face_refs: list[SurfaceShellFaceReference] = []
     seen_surface_shell_face_refs: set[tuple[str, str]] = set()
+    marked_non_participating_faces: list[MarkedNonParticipatingFace] = []
+    seen_marked_non_participating_face_refs: set[str] = set()
 
     for topology in topologies:
         for point in topology.get("points", []):
@@ -60,6 +64,10 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
             if key not in seen_surface_shell_face_refs:
                 seen_surface_shell_face_refs.add(key)
                 surface_shell_face_refs.append(face_ref)
+        for marked_face in topology.get("marked_non_participating_faces", None) or []:
+            if marked_face["ref"] not in seen_marked_non_participating_face_refs:
+                seen_marked_non_participating_face_refs.add(marked_face["ref"])
+                marked_non_participating_faces.append(marked_face)
 
     return {
         "points": list(points.values()),
@@ -68,4 +76,5 @@ def merge_topology(*topologies: TopologyData) -> TopologyData:
         "solids": list(solids.values()),
         "observation_curves": observation_curves,
         "surface_shell_face_refs": surface_shell_face_refs,
+        "marked_non_participating_faces": marked_non_participating_faces,
     }

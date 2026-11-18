@@ -138,10 +138,18 @@ class Solid(TypedDict):
 
 
 class ObservationCurve(TypedDict):
-    """Observation curve exemption for dangling-curve validation."""
+    """Observation curve exemption for dangling-curve validation.
+
+    `source` is a free-form provenance tag naming the collection or
+    mechanism that produced the exemption (e.g. the CSDM collection name it
+    was read from). It is validated only for shape (a non-empty string),
+    not against a closed vocabulary -- any collection explicitly marked
+    `topologyRole: "nonParticipating"`, not just the two legacy cadastral
+    collection names, can contribute entries here.
+    """
 
     ref: str
-    source: Literal["observedVectors", "vectorObservations"]
+    source: str
 
 
 class SurfaceShellFaceReference(TypedDict):
@@ -150,6 +158,14 @@ class SurfaceShellFaceReference(TypedDict):
 
     ref: str
     shell_id: str
+
+
+class MarkedNonParticipatingFace(TypedDict):
+    """Face explicitly marked non-participating via a feature's own
+    `topologyRole: "nonParticipating"` property, independent of shell
+    membership."""
+
+    ref: str
 
 
 class TopologyData(TypedDict):
@@ -161,6 +177,7 @@ class TopologyData(TypedDict):
     solids: list[Solid]
     observation_curves: NotRequired[list[ObservationCurve]]
     surface_shell_face_refs: NotRequired[list[SurfaceShellFaceReference]]
+    marked_non_participating_faces: NotRequired[list[MarkedNonParticipatingFace]]
 
 
 class TopologyIndexes(TypedDict):

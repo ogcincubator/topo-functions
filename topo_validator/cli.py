@@ -69,13 +69,39 @@ def _build_parser() -> argparse.ArgumentParser:
             "fixture's own topology by id; see topo_validator.rdf_loader."
         ),
     )
+    parser.add_argument(
+        "--extra-observation-curve-source",
+        action="append",
+        default=[],
+        metavar="COLLECTION_NAME",
+        dest="extra_observation_curve_sources",
+        help=(
+            "Additional top-level collection name to treat as an "
+            "observation-curve exemption source (repeatable), for fixtures "
+            "that cannot be edited to add a `topologyRole: \"nonParticipating\"` "
+            "marker. Extends rather than replaces the defaults "
+            "('observedVectors', 'vectorObservations') and any marked collections."
+        ),
+    )
     return parser
 
 
-def _load_and_validate_fixture(fixture_path: Path, raw_internal: bool, ttl_files: list[str] | None = None):
+def _load_and_validate_fixture(
+    fixture_path: Path,
+    raw_internal: bool,
+    ttl_files: list[str] | None = None,
+    extra_observation_curve_sources: list[str] | None = None,
+):
     """Load a fixture, adapt it when required, and run topology validation."""
     raw_fixture = load_json(fixture_path)
-    topology_data = raw_fixture if raw_internal else from_csdm_json(raw_fixture)
+    topology_data = (
+        raw_fixture
+        if raw_internal
+        else from_csdm_json(
+            raw_fixture,
+            extra_observation_curve_sources=set(extra_observation_curve_sources or []),
+        )
+    )
 
     if ttl_files:
         rdf_topologies = [from_rdf_graph(path) for pattern in ttl_files
@@ -132,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             fixture_path=fixture_path,
             raw_internal=args.raw_internal,
             ttl_files=args.ttl,
+            extra_observation_curve_sources=args.extra_observation_curve_sources,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"Input error: {exc}", file=sys.stderr)

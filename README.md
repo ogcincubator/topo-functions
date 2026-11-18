@@ -374,7 +374,41 @@ Full per-rule descriptions, issue codes, and tolerances are in [`topo_validator/
 topo-validate path/to/model.json --format text   # text | json | html, default text
 ```
 
-By default the CLI reads a Topo Feature / 3D CSDM JSON file, converts it, validates all conformance classes, and exits `0` (no errors), `1` (validation errors found), or `2` (input/CLI failure) — suitable for CI. `--raw-internal` accepts data already in the internal `points`/`curves`/`surfaces`/`solids` shape instead of CSDM JSON. `--ttl` (repeatable, supports glob) merges in topology resolved from an external RDF graph — see [RDF-graph input](#rdf-graph-input-ttl--json-ld) below.
+By default the CLI reads a Topo Feature / 3D CSDM JSON file, converts it, validates all conformance classes, and exits `0` (no errors), `1` (validation errors found), or `2` (input/CLI failure) — suitable for CI. `--raw-internal` accepts data already in the internal `points`/`curves`/`surfaces`/`solids` shape instead of CSDM JSON. `--ttl` (repeatable, supports glob) merges in topology resolved from an external RDF graph — see [RDF-graph input](#rdf-graph-input-ttl--json-ld) below. `--extra-observation-curve-source` (repeatable) names additional collections to treat as curve-dangling exemption sources, for a fixture that can't be edited to add a `topologyRole: "nonParticipating"` marker — see the non-participating-geometry note below.
+
+**Non-participating geometry.** `observedVectors`/`vectorObservations` curves, and faces reachable via a CSDM shell, are exempt from `DANGLING_CURVE`/`DANGLING_FACE` by default — see `topo_validator/topology_rules.md`'s TR-03/TR-18 sections. Any other use case can mark its own collections or features as intentionally non-participating by setting `topologyRole: "nonParticipating"` on a curve-source FeatureCollection's wrapper, or on an individual face Feature's `properties`, without naming them `observedVectors`/`vectorObservations`. This keeps the check precise: only explicitly marked geometry is exempt, everything else is still checked.
+
+Marking a curve-source collection (exempts every curve it references from `DANGLING_CURVE`, here `curve-7`):
+
+```json
+{
+  "siteObservationVectors": [
+    {
+      "type": "FeatureCollection",
+      "featureType": "siteObservationVectors",
+      "topologyRole": "nonParticipating",
+      "features": [
+        { "id": "obs-1", "type": "Feature", "topology": { "ref": "curve-7" } }
+      ]
+    }
+  ]
+}
+```
+
+Marking an individual face (exempts just that face from `DANGLING_FACE`, regardless of shell membership):
+
+```json
+{
+  "faces": [
+    {
+      "id": "face-3",
+      "type": "Feature",
+      "topology": { "type": "Face", "directed_references": [] },
+      "properties": { "topologyRole": "nonParticipating" }
+    }
+  ]
+}
+```
 
 ### Python API
 

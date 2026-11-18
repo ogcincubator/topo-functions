@@ -197,9 +197,10 @@ def partition_topology(data: TopologyData) -> tuple[TopologyData, TopologyData, 
 
         - `topology_3d` is *data* with every 2D point and every 2D-tainted
           curve/surface/solid removed, so it is exactly what today's
-          conformance-class rules should see. `observation_curves` and
-          `surface_shell_face_refs` entries referencing a removed
-          curve/surface are filtered out too, defensively.
+          conformance-class rules should see. `observation_curves`,
+          `surface_shell_face_refs`, and `marked_non_participating_faces`
+          entries referencing a removed curve/surface are filtered out too,
+          defensively.
         - `topology_2d` holds the 2D points plus every 2D-tainted curve and
           surface. It never contains solids -- see the module docstring.
         - `issues` currently holds only `MIXED_DIMENSION_CURVE` findings,
@@ -242,6 +243,13 @@ def partition_topology(data: TopologyData) -> tuple[TopologyData, TopologyData, 
             face_ref
             for face_ref in data["surface_shell_face_refs"]
             if face_ref.get("ref") not in tainted_surface_ids
+        ]
+
+    if "marked_non_participating_faces" in data:
+        topology_3d["marked_non_participating_faces"] = [
+            marked_face
+            for marked_face in data["marked_non_participating_faces"]
+            if marked_face.get("ref") not in tainted_surface_ids
         ]
 
     topology_2d: TopologyData = {
