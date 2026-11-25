@@ -71,8 +71,8 @@ Nothing is ever repaired.
 | Topo Feature | JSON-FG |
 | :- | :- |
 | The document | A `FeatureCollection` with `conformsTo` (core and polyhedra), `coordRefSys` (the `crs` given by the caller), `geometryDimension: 3`, `name` and, when given, `derivedFrom`. No `featureType` is written, which would bring in the types-schemas class. |
-| A solid (`features="per-solid"`) | A `Feature` with the solid's `id`, its `Polyhedron` in `place`, and `geometry: null` (JSON-FG allows only GeoJSON geometry types in `geometry`). |
-| All solids (`features="multi"`) | One `Feature` with the document's `id` and a `MultiPolyhedron` in `place`. |
+| A solid (`features="per-solid"`) | A `Feature` with the solid's `id`, `time: null`, its `Polyhedron` in `place`, and `geometry: null` (JSON-FG allows only GeoJSON geometry types in `geometry`). A solid has no temporal extent. `time` is written as `null` **temporarily**: 1.0.0 requires neither `time` nor `place` (a deliberate simplification after the 2024 feedback in [ogc-feat-geo-json#128](https://github.com/opengeospatial/ogc-feat-geo-json/issues/128)), but the OGC Building Blocks JSON-FG `feature` block (based on JSON-FG 0.1.1) still requires `time`; the member is to be dropped once the blocks follow 1.0.0. |
+| All solids (`features="multi"`) | One `Feature` with the document's `id`, `time: null` and a `MultiPolyhedron` in `place`. |
 | A shell | One element of the `Polyhedron`'s coordinates, the exterior first. |
 | A face | One polygon of its shell, its rings closed (the first position repeated at the end), in the face's orientation in the solid: its normal points away from the material. |
 | A point | Its `place` coordinates, unchanged, in the CRS's axis order. |
@@ -113,7 +113,7 @@ This assumes that `place` is in a conformal projection, so that a face facing up
   JSON-FG is written from `place`; every point must have `place`, so CRSs are never mixed.
   Points that no solid uses may be 2D.
 - **The CRS is stated by the caller.**
-  A Topo Feature document does not give its `place` CRS in a form JSON-FG can use, so `crs` (a URI, or a list of URIs for a compound CRS such as MGA zone 50 with AHD) is required and written as `coordRefSys`.
+  A Topo Feature document does not give its `place` CRS in a form JSON-FG can use, so `crs` (a URI, or a list of URIs for a compound CRS such as MGA zone 50 with AHD) is required and written as `coordRefSys`, once, on the collection: JSON-FG 1.0.0 allows `coordRefSys` only in the root object (Requirement 12, `/req/core/same-crs`), so features and `place` never carry one.
 - **Axis order.**
   CRS axes are in their EPSG order: east-north for some projections, north-east for others.
   JSON-FG coordinates are written unchanged, in that order.

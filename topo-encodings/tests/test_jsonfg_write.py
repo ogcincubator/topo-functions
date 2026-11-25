@@ -48,7 +48,9 @@ def test_cube_collection_members():
     assert out["coordRefSys"] == CRS
     assert out["geometryDimension"] == 3
     (feature,) = out["features"]
+    assert list(feature) == ["type", "id", "time", "place", "geometry", "properties"]
     assert feature["id"] == "cube"
+    assert feature["time"] is None
     assert feature["geometry"] is None
     assert feature["place"]["type"] == "Polyhedron"
     assert feature["properties"] == {
@@ -100,6 +102,7 @@ def test_multi_polyhedron():
     out = to_jsonfg(doc, place_axes=ENU, crs=CRS, features="multi")
     (feature,) = out["features"]
     assert feature["id"] == "survey-1"
+    assert feature["time"] is None
     assert feature["place"]["type"] == "MultiPolyhedron"
     assert feature["place"]["coordinates"] == [
         f["place"]["coordinates"] for f in per_solid["features"]
@@ -181,3 +184,22 @@ def test_a_topology_problem_is_refused():
     with pytest.raises(EncodingError) as err:
         to_jsonfg(doc, place_axes=ENU, crs=CRS)
     assert err.value.codes == {"MISSING_REFERENCE"}
+
+
+@pytest.mark.parametrize("features", ["per-solid", "multi"])
+def test_coord_ref_sys_only_in_the_root_object(features):
+    """JSON-FG 1.0.0 Requirement 12, /req/core/same-crs."""
+    out = to_jsonfg(
+        two_cubes_sharing_a_face_doc(), place_axes=ENU, crs=CRS, features=features
+    )
+
+    def nested(node, root):
+        if isinstance(node, dict):
+            here = 0 if root else int("coordRefSys" in node)
+            return here + sum(nested(v, False) for v in node.values())
+        if isinstance(node, list):
+            return sum(nested(v, False) for v in node)
+        return 0
+
+    assert out["coordRefSys"] == CRS
+    assert nested(out, True) == 0

@@ -6,6 +6,12 @@ reference system with the coordinates unchanged; ``geometry`` is ``null``, becau
 JSON-FG allows only GeoJSON geometry types there (the per-face GeoJSON writer gives the
 WGS 84 view).
 With ``features="multi"`` all solids become one ``MultiPolyhedron``.
+Each feature has ``"time": null``, temporarily: a Topo Feature solid has no temporal
+extent, and 1.0.0 requires neither ``time`` nor ``place`` (a deliberate simplification
+after the 2024 feedback in ogc-feat-geo-json#128,
+https://github.com/opengeospatial/ogc-feat-geo-json/issues/128), but the OGC Building
+Blocks JSON-FG ``feature`` block (based on JSON-FG 0.1.1) still requires ``time``.
+The member is to be dropped once the blocks follow 1.0.0.
 
 Orientation comes from the topology through :mod:`topo_encodings.traverse`, and the
 ring order is written as it is: orientation is physical in both Topo Feature and
@@ -102,6 +108,7 @@ def _solid_feature(traversal: Traversal, solid: SolidView) -> dict[str, Any]:
     return {
         "type": "Feature",
         "id": solid.id,
+        "time": None,
         "place": {
             "type": "Polyhedron",
             "coordinates": polyhedron_coordinates(traversal, solid),
@@ -115,6 +122,7 @@ def _multi_feature(doc: Mapping[str, Any], traversal: Traversal) -> dict[str, An
     feature: dict[str, Any] = {"type": "Feature"}
     if isinstance(doc.get("id"), (str, int)):
         feature["id"] = doc["id"]
+    feature["time"] = None
     feature["place"] = {
         "type": "MultiPolyhedron",
         "coordinates": [polyhedron_coordinates(traversal, s) for s in traversal.solids],
