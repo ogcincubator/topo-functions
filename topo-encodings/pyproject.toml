@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "topo-encodings"
+version = "0.1.0"
+description = "Topo Feature to JSON-FG 1.0.0 (polyhedra) and per-face GeoJSON, from one strict traversal of solids; standard library only"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+topo2jsonfg = "topo_encodings.cli:main_topo2jsonfg"
+topo2geojson-faces = "topo_encodings.cli:main_topo2geojson_faces"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools]
+packages = ["topo_encodings"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.black]
+target-version = ["py310"]
