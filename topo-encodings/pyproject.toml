@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "topo-encodings"
 version = "0.1.0"
-description = "Topo Feature to JSON-FG 1.0.0 (polyhedra) and per-face GeoJSON, from one strict traversal of solids; standard library only"
+description = "Topo Feature to JSON-FG 1.0.0 (polyhedra) and per-face GeoJSON, from one strict traversal of solids; standard library only, pyproj optional"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -16,6 +16,8 @@ topo2jsonfg = "topo_encodings.cli:main_topo2jsonfg"
 topo2geojson-faces = "topo_encodings.cli:main_topo2geojson_faces"
 
 [project.optional-dependencies]
+# The place CRS's axis order looked up from its URI (resolve_axes).
+crs = ["pyproj>=3.5"]
 test = ["pytest>=7.0"]
 
 [tool.setuptools]

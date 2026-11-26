@@ -11,15 +11,18 @@ Each returns the encoding as a JSON string; a document that cannot be encoded ra
 ``topo2jsonfg`` metadata:
 
 - ``crs`` (required): the ``place`` CRS URI, or a list of URIs for a compound CRS;
-- ``place_axes`` (required): the ``place`` CRS's axis order, such as
-  ``east-north-up``, for the orientation check;
+  ``place`` is in its authority axis order, which the orientation check takes from
+  it with pyproj (install ``topo-encodings[crs]``);
+- ``place_axes``: the ``place`` CRS's axis order, such as ``east-north-up``, needed
+  only without pyproj or for a CRS it cannot look up, and otherwise checked against
+  the CRS;
 - ``features``: ``per-solid`` (default) or ``multi``;
 - ``name``: the collection's name (default: the document's ``surveyTitle`` or
   ``name``).
 
 ``topo2geojson-faces`` metadata:
 
-- ``place_axes`` (required): as above;
+- ``crs`` or ``place_axes`` (one is required): as above, for the axis order only;
 - ``heights`` (required): ``ellipsoidal-geometry``, stating that the document's
   ``geometry`` heights are ellipsoidal; a register has no geoid grid, so a transformer
   from ``place`` can only be supplied by calling the library directly;
@@ -72,7 +75,7 @@ class Topo2JsonFgTransform:
             to_jsonfg(
                 _document(metadata.input_data),
                 crs=_required(settings, "crs", "topo2jsonfg"),
-                place_axes=_required(settings, "place_axes", "topo2jsonfg"),
+                place_axes=settings.get("place_axes"),
                 features=settings.get("features", "per-solid"),
                 name=settings.get("name"),
             )
@@ -90,7 +93,8 @@ class Topo2GeoJsonFacesTransform:
         return dumps(
             to_geojson_faces(
                 _document(metadata.input_data),
-                place_axes=_required(settings, "place_axes", name),
+                crs=settings.get("crs"),
+                place_axes=settings.get("place_axes"),
                 heights=_required(settings, "heights", name),
                 name=settings.get("name"),
             )

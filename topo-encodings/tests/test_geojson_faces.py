@@ -298,7 +298,7 @@ def test_reading_north_east_place_as_east_north_turns_normals_over():
 
     with pytest.raises(EncodingError) as err:
         encode()
-    assert err.value.codes == {"SHELL_INSIDE_OUT"}
+    assert err.value.codes == {"SHELL_INSIDE_OUT", "AXIS_ORDER_SUSPECTED"}
     out = encode(check_orientation=False)
     assert _by_face(out)["top"]["properties"]["outwardNormal"] == [0.0, 0.0, -1.0]
 
@@ -324,5 +324,5 @@ def test_an_unknown_axis_order_is_refused(axes):
 
 
 def test_the_axis_order_is_required():
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="give crs or place_axes"):
         to_geojson_faces(cube_doc(), transformer=transformer)

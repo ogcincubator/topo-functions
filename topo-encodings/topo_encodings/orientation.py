@@ -2,10 +2,13 @@
 
 A face's outward side is physical: it is given by the right-hand rule in east, north,
 up, so it does not depend on the order of the ``place`` CRS's axes.
-CRS axes are in their EPSG order, east-north for some projections (MGA) and
-north-east for others (NZTM); a north-east-up system is left-handed, so the right-hand
-rule applied to its coordinates as stored would give the opposite side.
-The caller states the axis order (``place_axes``); the library cannot look a CRS up.
+``place`` coordinates are in the CRS's authority (EPSG) axis order, as JSON-FG's are:
+east-north for some projections (MGA) and north-east for others (NZTM); a
+north-east-up system is left-handed, so the right-hand rule applied to its
+coordinates as stored would give the opposite side.
+:func:`resolve_axes` takes the axis order from the CRS (:func:`crs_axes`, which needs
+pyproj, the optional ``crs`` extra), or from ``place_axes`` where the CRS cannot be
+looked up; a stated order that differs from the CRS's is refused.
 JSON-FG 1.0.0 states its orientation requirements for a right-handed Cartesian
 system, all face normals pointing away from the solid's material, which is the same
 reading.
@@ -13,12 +16,14 @@ reading.
 :func:`check_orientation` checks that, in east, north, up, each exterior shell's faces
 (after the ring, face and shell orientations are composed) enclose a positive volume
 and each void's a negative one, so every normal points away from the material.
-It catches data written with the other reading and a wrongly stated ``place_axes``.
+It catches data written with the other reading, and coordinates that are not in the
+axis order used: then every shell is inside out, and :data:`AXIS_ORDER_SUSPECTED` is
+added to say so.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence, Union
 
 from .diagnostics import EncodingError, Problem
 from .traverse import ShellView, Traversal
@@ -37,6 +42,87 @@ PLACE_AXES = tuple(
 )
 
 ToEnu = Callable[[Sequence[float]], list[float]]
+
+# The place CRS: a URI, or a list of URIs for a compound CRS (horizontal, vertical).
+Crs = Union[str, Sequence[str]]
+
+AXIS_ORDER_SUSPECTED = "AXIS_ORDER_SUSPECTED"
+
+
+def crs_uris(crs: Crs) -> list[str]:
+    """The CRS as a non-empty list of URIs; ``ValueError`` if it is not one."""
+    if isinstance(crs, str):
+        if not crs:
+            raise ValueError("crs is empty")
+        return [crs]
+    uris = list(crs)
+    if not uris or not all(isinstance(u, str) and u for u in uris):
+        raise ValueError("crs must be a URI or a non-empty list of URIs")
+    return uris
+
+
+def crs_axes(crs: Crs) -> str:
+    """The CRS's authority axis order as a :data:`PLACE_AXES` value, looked up with
+    pyproj; for a compound CRS, the horizontal axes come first.
+
+    Raises ``ImportError`` without pyproj (``pip install "topo-encodings[crs]"``),
+    and ``ValueError`` when the CRS cannot be looked up or its axes are not two
+    horizontal directions (east, north, west or south) followed, if at all, by up.
+    """
+    import pyproj  # optional: the ``crs`` extra
+
+    directions = []
+    for uri in crs_uris(crs):
+        try:
+            found = pyproj.CRS.from_user_input(uri)
+        except pyproj.exceptions.CRSError as exc:
+            raise ValueError(f"cannot look up the CRS {uri!r}: {exc}") from exc
+        directions += [axis.direction.lower() for axis in found.axis_info]
+    horizontal, vertical = directions[:2], directions[2:]
+    order = "-".join(horizontal) + "-up"
+    if order not in PLACE_AXES or vertical not in ([], ["up"]):
+        raise ValueError(
+            f"the CRS {crs!r} has axes {', '.join(directions)}; "
+            "place needs two horizontal axes and, optionally, up"
+        )
+    return order
+
+
+def resolve_axes(place_axes: Optional[str] = None, crs: Optional[Crs] = None) -> ToEnu:
+    """The function to east, north, up for ``place`` coordinates in the CRS's
+    authority axis order.
+
+    With pyproj installed and a CRS it can look up, the order comes from ``crs``, and
+    a stated ``place_axes`` must agree with it (``ValueError`` otherwise: ``place`` is
+    in the CRS's axis order, so a different order means the coordinates or the CRS
+    are wrong).
+    Otherwise ``place_axes`` is used as stated; without it, ``ValueError`` says what
+    is missing.
+    """
+    if crs is not None:
+        try:
+            derived = crs_axes(crs)
+        except ImportError:
+            if place_axes is None:
+                raise ValueError(
+                    "the axis order of the place CRS is needed: install pyproj "
+                    '(pip install "topo-encodings[crs]") to take it from crs, '
+                    "or state place_axes"
+                ) from None
+        except ValueError:
+            if place_axes is None:
+                raise
+        else:
+            if place_axes is not None and place_axes != derived:
+                raise ValueError(
+                    f"place_axes {place_axes!r} differs from the axis order of the "
+                    f"CRS {crs!r}, {derived!r}; place coordinates are in the CRS's "
+                    "axis order"
+                )
+            place_axes = derived
+    if place_axes is None:
+        raise ValueError("give crs or place_axes: the place CRS's axis order is needed")
+    return axes(place_axes)
 
 
 def axes(place_axes: str) -> ToEnu:
@@ -73,6 +159,16 @@ def check_orientation(traversal: Traversal, to_enu: ToEnu) -> None:
             if problem is not None and problem not in problems:
                 problems.append(problem)
     if problems:
+        shells = {shell.id for solid in traversal.solids for shell in solid.shells}
+        if [p.code for p in problems] == ["SHELL_INSIDE_OUT"] * len(shells):
+            problems.append(
+                Problem(
+                    AXIS_ORDER_SUSPECTED,
+                    "every shell is inside out: either the solids are reversed, or "
+                    "place is not in the axis order used (the CRS's authority order; "
+                    "east and north swapped give exactly this)",
+                )
+            )
         raise EncodingError(problems)
 
 

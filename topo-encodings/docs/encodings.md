@@ -49,7 +49,7 @@ A face shared by two solids appears once in each, in that solid's orientation, s
 
 A face's outward side is physical: it is given by the right-hand rule in east, north, up, whatever the order of the `place` CRS's axes.
 So a ring's order of points does not change when the same solid is given in a CRS with the other axis order, such as MGA (east-north) and NZTM (north-east); only each point's coordinates are swapped.
-Applied to a north-east-up CRS's coordinates as stored, the right-hand rule gives the opposite side, because that system is left-handed; the writers therefore need the axis order stated (`place_axes`).
+Applied to a north-east-up CRS's coordinates as stored, the right-hand rule gives the opposite side, because that system is left-handed; the writers therefore need the axis order (see [Axis order](#coordinates-crs-and-heights)).
 
 JSON-FG 1.0.0 states its orientation requirements for a right-handed Cartesian system: every face normal points away from the solid's material, outward on an exterior shell and into the void on a void shell.
 That is the same reading, so JSON-FG coordinates are written in the CRS's axis order with the rings in the source's order, unchanged.
@@ -58,7 +58,8 @@ That is the same reading, so JSON-FG coordinates are written in the CRS's axis o
 
 Both writers check, in east, north, up, that each exterior shell's faces enclose a positive volume and each void's a negative one, after the ring, face and shell orientations are composed, so every normal points away from the material (`topo_encodings.orientation`).
 A shell that fails is refused (`SHELL_INSIDE_OUT`), as is a shell enclosing no volume (`SHELL_WITHOUT_VOLUME`).
-The check catches data written for the other reading of orientation, a wrongly stated `place_axes` (every shell then fails), and defects such as a void reversed twice.
+The check catches data written for the other reading of orientation, coordinates that are not in the axis order used, and defects such as a void reversed twice.
+Coordinates in the other axis order turn every shell inside out, so when every shell fails with `SHELL_INSIDE_OUT` the writers add `AXIS_ORDER_SUSPECTED`: the check cannot tell a solid reversed throughout from swapped axes, and says so rather than guess.
 
 `check_orientation=False` (library) or `--no-orientation-check` (command line) skips the check, to encode a source whose defect should be shown rather than refused; the defect is then carried into the encoding as it is.
 The Building Blocks transforms always check.
@@ -66,7 +67,7 @@ Nothing is ever repaired.
 
 ## JSON-FG 1.0.0
 
-`to_jsonfg(doc, *, crs, place_axes, features="per-solid", name=None, derived_from=None, check_orientation=True)`; OGC 21-045r1, conformance classes core and polyhedra.
+`to_jsonfg(doc, *, crs, place_axes=None, features="per-solid", name=None, derived_from=None, check_orientation=True)`; OGC 21-045r1, conformance classes core and polyhedra.
 
 | Topo Feature | JSON-FG |
 | :- | :- |
@@ -85,7 +86,7 @@ With `features="multi"`, the per-solid properties are listed in `properties.soli
 
 ## Per-face GeoJSON
 
-`to_geojson_faces(doc, *, place_axes, transformer=None, heights=None, decimals=(9, 4), name=None, derived_from=None, check_orientation=True)`; RFC 7946.
+`to_geojson_faces(doc, *, crs=None, place_axes=None, transformer=None, heights=None, decimals=(9, 4), name=None, derived_from=None, check_orientation=True)`; RFC 7946.
 
 The output is a view of the faces, not a solid, and does not claim to be one.
 It is a separate encoding from `topo2geojson`'s, whose outputs are unchanged.
@@ -115,9 +116,12 @@ This assumes that `place` is in a conformal projection, so that a face facing up
 - **The CRS is stated by the caller.**
   A Topo Feature document does not give its `place` CRS in a form JSON-FG can use, so `crs` (a URI, or a list of URIs for a compound CRS such as MGA zone 50 with AHD) is required and written as `coordRefSys`, once, on the collection: JSON-FG 1.0.0 allows `coordRefSys` only in the root object (Requirement 12, `/req/core/same-crs`), so features and `place` never carry one.
 - **Axis order.**
-  CRS axes are in their EPSG order: east-north for some projections, north-east for others.
+  `place` coordinates are in the CRS's authority (EPSG) axis order, as JSON-FG coordinates are (`/req/core/axis-order`): east-north for some projections (MGA), north-east for others (NZTM).
   JSON-FG coordinates are written unchanged, in that order.
-  Both writers need the order stated (`place_axes`, one of the eight orders such as `east-north-up` or `north-east-up`) for the [orientation check](#orientation-check) and the per-face normals: orientation is [physical](#physical-orientation), and a north-east-up system is left-handed.
+  Both writers need the order for the [orientation check](#orientation-check) and the per-face normals: orientation is [physical](#physical-orientation), and a north-east-up system is left-handed.
+  With pyproj installed (the `crs` extra), it is taken from `crs`: the first two axes must be horizontal (east, north, west or south), followed, if at all, by up; for a compound CRS the URIs' axes are read in turn.
+  `place_axes` (one of the eight orders such as `east-north-up` or `north-east-up`) is needed only without pyproj, or for a CRS pyproj cannot look up (a local grid, say); when the CRS is known, a `place_axes` that differs from its order is refused, because the coordinates or the CRS would then be wrong.
+  The per-face writer takes `crs` only for the axis order and does not write it.
 - **Ellipsoidal heights for GeoJSON.**
   RFC 7946 positions carry height above the ellipsoid.
   The per-face writer takes positions from a `transformer` the caller supplies (called with each point's `place` in the CRS's axis order, returning longitude, latitude and ellipsoidal height), or from `geometry` when the caller states that its heights are ellipsoidal (`heights="ellipsoidal-geometry"`).
@@ -159,7 +163,9 @@ Every problem found is reported together, as an `EncodingError` listing a stable
 | `SHELL_INSIDE_OUT` | In east, north, up, an exterior shell's normals point into the solid, or a void's into the material. |
 | `SHELL_WITHOUT_VOLUME` | A shell encloses no volume. |
 
-A missing or empty `crs`, an unknown `features`, `heights` or `place_axes` value are wrong arguments and raise `ValueError`.
+| `AXIS_ORDER_SUSPECTED` | Every shell is inside out: the solids are reversed throughout, or `place` is not in the axis order used. Added after the `SHELL_INSIDE_OUT` problems, with no `id`. |
+
+A missing or empty `crs`, an unknown `features`, `heights` or `place_axes` value, no axis order (neither a `crs` pyproj can look up nor `place_axes`), a `place_axes` that differs from the CRS's, and a CRS whose axes are not two horizontal ones and up are wrong arguments and raise `ValueError` (exit status 2 on the command line).
 
 Not supported, and so refused or not produced:
 
@@ -172,20 +178,20 @@ The OGC Building Blocks transforms follow the same plugin convention as `topo2ge
 
 | Transform | Output | `metadata` |
 | :- | :- | :- |
-| `topo2jsonfg` | JSON-FG | `crs` and `place_axes` (both required), `features`, `name` |
-| `topo2geojson-faces` | GeoJSON | `place_axes` and `heights: ellipsoidal-geometry` (both required), `name` |
+| `topo2jsonfg` | JSON-FG | `crs` (required), `place_axes` (without pyproj), `features`, `name` |
+| `topo2geojson-faces` | GeoJSON | `crs` or `place_axes` (one required, for the axis order), `heights: ellipsoidal-geometry` (required), `name` |
 
 Both declare their output as `application/geo+json`, as OGC 21-045r1's profile examples do: a JSON-FG document is also a GeoJSON document, and its `conformsTo` says it is JSON-FG.
 `application/vnd.ogc.fg+json` (OGC testbeds) and `application/fg+json` (a possible registered form) are not used while neither is registered.
 
 A register has no geoid grid, so `topo2geojson-faces` in a register needs `geometry` heights that are ellipsoidal.
 
-A register installs only this distribution:
+A register installs only this distribution, with the `crs` extra so that the axis order comes from `crs` (the extra in a `pip:` line is untried in a register build):
 
 ```yaml
 plugins:
   transforms:
-    - pip: git+https://github.com/ogcincubator/topo-functions.git#subdirectory=topo-encodings
+    - pip: topo-encodings[crs] @ git+https://github.com/ogcincubator/topo-functions.git#subdirectory=topo-encodings
       modules:
         - topo_encodings.transform
 ```
@@ -199,16 +205,14 @@ transforms:
       crs:
         - http://www.opengis.net/def/crs/EPSG/0/7850
         - http://www.opengis.net/def/crs/EPSG/0/5711
-      place_axes: east-north-up
 ```
 
 The command-line tools write to standard output or `-o`, and exit with 1 (and the problems on standard error) when a document cannot be encoded:
 
 ```bash
 topo2jsonfg solid.json --crs http://www.opengis.net/def/crs/EPSG/0/7850 \
-    --crs http://www.opengis.net/def/crs/EPSG/0/5711 --place-axes east-north-up \
-    -o solid.jsonfg.json
-topo2geojson-faces solid.json --place-axes east-north-up \
+    --crs http://www.opengis.net/def/crs/EPSG/0/5711 -o solid.jsonfg.json
+topo2geojson-faces solid.json --crs http://www.opengis.net/def/crs/EPSG/0/7850 \
     --heights ellipsoidal-geometry -o solid-faces.geojson
 ```
 
@@ -217,3 +221,4 @@ topo2geojson-faces solid.json --place-axes east-north-up \
 - **Orientation in Topo Feature.**
   `topo-solid`'s description does not yet say that orientation is physical; this library reads it so, as JSON-FG does.
   `topo_validator` computes a solid's signed volume from `place` as stored, so it would find a correct solid in a north-east-up CRS inside out.
+  Nor does a Topo Feature document state its `place` CRS, or that `place` is in that CRS's axis order, so the axis order comes from the caller's `crs`; proposed upstream are both statements, so that software can take the order from the document.

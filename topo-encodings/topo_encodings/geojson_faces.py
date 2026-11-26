@@ -15,9 +15,9 @@ Both decisions are taken from that normal, not from the rings' area in longitude
 latitude: for a wall, that area comes only from coordinate rounding.
 
 The normal is computed from ``place`` and given as (east, north, up) whatever the
-``place`` CRS's axis order, which the caller states (``place_axes``); orientation is
-physical (see :mod:`topo_encodings.orientation`), and each shell is checked to face
-away from its solid's material unless the caller turns the check off.
+``place`` CRS's axis order, which is taken from ``crs`` or stated (``place_axes``);
+orientation is physical (see :mod:`topo_encodings.orientation`), and each shell is
+checked to face away from its solid's material unless the caller turns the check off.
 This assumes the ``place`` CRS is a conformal projection, so that a face facing up is
 counter-clockwise in longitude and latitude.
 
@@ -37,7 +37,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .diagnostics import EncodingError, Problem
 from .jsonfg_write import point_quality
-from .orientation import PLACE_AXES, axes, check_orientation as _check_orientation
+from .orientation import PLACE_AXES, Crs, crs_uris, resolve_axes
+from .orientation import check_orientation as _check_orientation
 from .traverse import Traversal, require_coordinates, traverse
 
 ELLIPSOIDAL_GEOMETRY = "ellipsoidal-geometry"
@@ -56,7 +57,8 @@ __all__ = ["PLACE_AXES", "to_geojson_faces"]
 def to_geojson_faces(
     doc: Mapping[str, Any],
     *,
-    place_axes: str,
+    crs: Optional[Crs] = None,
+    place_axes: Optional[str] = None,
     transformer: Optional[Transformer] = None,
     heights: Optional[str] = None,
     decimals: tuple[int, int] = (LONLAT_DECIMALS, HEIGHT_DECIMALS),
@@ -66,9 +68,13 @@ def to_geojson_faces(
 ) -> dict[str, Any]:
     """The RFC 7946 FeatureCollection of faces for a Topo Feature document.
 
-    ``place_axes`` states the ``place`` CRS's axis order, such as ``"east-north-up"``
-    (MGA) or ``"north-east-up"`` (NZTM); it is required because the library cannot
-    look the CRS up (see :data:`PLACE_AXES`).
+    ``place`` coordinates are in the CRS's authority axis order: give ``crs`` (a URI,
+    or a list for a compound CRS) to take it from the CRS with pyproj (the ``crs``
+    extra), or ``place_axes``, such as ``"east-north-up"`` (MGA) or
+    ``"north-east-up"`` (NZTM; see :data:`PLACE_AXES`), without pyproj or for a CRS
+    it cannot look up; given both, they must agree
+    (see :func:`topo_encodings.orientation.resolve_axes`).
+    ``crs`` is used only for the axis order: it is not written.
     Give exactly one height source: ``transformer``, called with each point's
     ``place`` coordinates in that axis order and returning
     ``(longitude, latitude, ellipsoidal height)``; or ``heights="ellipsoidal-geometry"``
@@ -80,7 +86,9 @@ def to_geojson_faces(
     source whose defect should be shown rather than refused.
     Raises :class:`EncodingError` when the document cannot be encoded.
     """
-    to_enu = axes(place_axes)
+    if crs is not None:
+        crs_uris(crs)
+    to_enu = resolve_axes(place_axes, crs)
     if (transformer is None) == (heights is None):
         raise EncodingError(
             [

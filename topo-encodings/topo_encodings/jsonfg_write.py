@@ -28,7 +28,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional, Sequence, Union
 
 from .diagnostics import EncodingError, Problem
-from .orientation import axes, check_orientation as _check_orientation
+from .orientation import Crs, crs_uris, resolve_axes
+from .orientation import check_orientation as _check_orientation
 from .traverse import SolidView, Traversal, require_coordinates, traverse
 
 CORE = "http://www.opengis.net/spec/json-fg-1/1.0/conf/core"
@@ -36,14 +37,12 @@ POLYHEDRA = "http://www.opengis.net/spec/json-fg-1/1.0/conf/polyhedra"
 CONFORMS_TO = (CORE, POLYHEDRA)
 FEATURES = ("per-solid", "multi")
 
-Crs = Union[str, Sequence[str]]
-
 
 def to_jsonfg(
     doc: Mapping[str, Any],
     *,
     crs: Crs,
-    place_axes: str,
+    place_axes: Optional[str] = None,
     features: str = "per-solid",
     name: Optional[str] = None,
     derived_from: Optional[Mapping[str, Any]] = None,
@@ -55,15 +54,19 @@ def to_jsonfg(
     for a compound one (for example horizontal and vertical); it is written as
     ``coordRefSys`` and is required, because a Topo Feature document does not state
     it in a form JSON-FG can use.
-    ``place_axes`` states that CRS's axis order, such as ``"east-north-up"`` (MGA) or
-    ``"north-east-up"`` (NZTM), for the orientation check; ``check_orientation=False``
-    skips the check, to encode a source whose defect should be shown.
+    ``place`` coordinates are in the CRS's authority axis order, which the
+    orientation check takes from ``crs`` with pyproj (the ``crs`` extra);
+    ``place_axes``, such as ``"east-north-up"`` (MGA) or ``"north-east-up"`` (NZTM),
+    is needed only without pyproj or for a CRS it cannot look up, and must otherwise
+    agree with the CRS (see :func:`topo_encodings.orientation.resolve_axes`).
+    ``check_orientation=False`` skips the check, to encode a source whose defect
+    should be shown.
     ``name`` defaults to the document's ``surveyTitle`` or ``name``; ``derived_from``,
     when given, is written as the collection's ``derivedFrom`` (provenance).
     Raises :class:`EncodingError` when the document cannot be encoded.
     """
     coord_ref_sys = _coord_ref_sys(crs)
-    to_enu = axes(place_axes)
+    to_enu = resolve_axes(place_axes, crs)
     if features not in FEATURES:
         raise ValueError(f"features must be one of {FEATURES}, not {features!r}")
     traversal = traverse(doc)
@@ -165,14 +168,8 @@ def point_quality(traversal: Traversal, point_ids: Sequence[str]) -> Optional[fl
 
 
 def _coord_ref_sys(crs: Crs) -> Union[str, list[str]]:
-    if isinstance(crs, str):
-        if not crs:
-            raise ValueError("crs is empty")
-        return crs
-    uris = list(crs)
-    if not uris or not all(isinstance(u, str) and u for u in uris):
-        raise ValueError("crs must be a URI or a non-empty list of URIs")
-    return uris
+    uris = crs_uris(crs)
+    return crs if isinstance(crs, str) else uris
 
 
 def _document_name(doc: Mapping[str, Any]) -> Optional[str]:

@@ -31,7 +31,8 @@ jobs:
           python -m build
 
   test-topo-encodings:
-    # The second distribution in topo-encodings/ (standard library only).
+    # The second distribution in topo-encodings/ (standard library only; pyproj is
+    # the optional crs extra, so the tests run without it and then with it).
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -57,7 +58,13 @@ jobs:
           r = [x for x in m.requires('topo-encodings') or [] if 'extra ==' not in x];
           assert not r, r"
 
-      - name: Run tests
+      - name: Run tests without the crs extra
+        run: pytest -v
+
+      - name: Install the crs extra (pyproj)
+        run: pip install ".[test,crs]"
+
+      - name: Run tests with the crs extra
         run: pytest -v
 
       - name: Validate packaging (sdist + wheel build)

@@ -23,6 +23,7 @@ from topo_encodings.transform import Topo2JsonFgTransform
 from topo_encodings.traverse import traverse
 
 CRS = "http://www.opengis.net/def/crs/EPSG/0/7850"
+NZTM = "http://www.opengis.net/def/crs/EPSG/0/2193"  # north, east
 ENU = "east-north-up"
 NEU = "north-east-up"
 
@@ -87,7 +88,7 @@ def test_units_on_a_parcel_pass():
 def test_the_same_solid_in_north_east_place_passes_and_keeps_its_rings():
     doc = _north_east(cube_with_void_doc())
     check_orientation(traverse(doc), axes(NEU))
-    out = to_jsonfg(doc, crs=CRS, place_axes=NEU)
+    out = to_jsonfg(doc, crs=NZTM, place_axes=NEU)
     expected = to_jsonfg(cube_with_void_doc(), crs=CRS, place_axes=ENU)
     swapped = [
         [[[[n, e, h] for e, n, h in ring] for ring in face] for face in shell]
@@ -99,20 +100,25 @@ def test_the_same_solid_in_north_east_place_passes_and_keeps_its_rings():
 @pytest.mark.parametrize("place_axes", [NEU, "south-west-up"])
 def test_a_wrongly_stated_axis_order_turns_every_shell_inside_out(place_axes):
     err = _codes(cube_with_void_doc(), place_axes)
-    assert err.codes == {"SHELL_INSIDE_OUT"}
-    assert [p.id for p in err.problems] == ["outer", "void"]
+    assert [(p.code, p.id) for p in err.problems] == [
+        ("SHELL_INSIDE_OUT", "outer"),
+        ("SHELL_INSIDE_OUT", "void"),
+        ("AXIS_ORDER_SUSPECTED", None),
+    ]
+    assert "axis order" in err.problems[-1].message
 
 
 def test_an_exterior_shell_used_inside_out_is_refused():
     err = _codes(_inside_out_cube().doc())
-    assert err.codes == {"SHELL_INSIDE_OUT"}
+    # Every shell inside out reads the same as a wrong axis order, so both are said.
+    assert err.codes == {"SHELL_INSIDE_OUT", "AXIS_ORDER_SUSPECTED"}
     assert "into the solid" in err.problems[0].message
 
 
 def test_a_shell_used_by_two_solids_is_reported_once():
     b = _inside_out_cube()
     b.solid("y", [("s", "-")])
-    assert [p.id for p in _codes(b.doc()).problems] == ["s"]
+    assert [p.id for p in _codes(b.doc()).problems] == ["s", None]
 
 
 def test_a_void_reversed_twice_is_refused_by_both_writers():

@@ -73,13 +73,9 @@ def test_topo2jsonfg_transform_multi_and_name():
     assert out["features"][0]["place"]["type"] == "MultiPolyhedron"
 
 
-@pytest.mark.parametrize(
-    "metadata, missing",
-    [({"place_axes": ENU}, "'crs'"), ({"crs": CRS}, "'place_axes'")],
-)
-def test_topo2jsonfg_transform_needs_crs_and_axes(metadata, missing):
-    with pytest.raises(ValueError, match=missing):
-        Topo2JsonFgTransform().transform(_host(json.dumps(cube_doc()), **metadata))
+def test_topo2jsonfg_transform_needs_crs():
+    with pytest.raises(ValueError, match="'crs'"):
+        Topo2JsonFgTransform().transform(_host(json.dumps(cube_doc()), place_axes=ENU))
 
 
 def test_topo2geojson_faces_transform():
@@ -98,7 +94,7 @@ def test_topo2geojson_faces_transform():
     "metadata",
     [{"heights": "ellipsoidal-geometry"}, {"place_axes": "east-north-up"}],
 )
-def test_topo2geojson_faces_transform_needs_axes_and_heights(metadata):
+def test_topo2geojson_faces_transform_needs_an_axis_order_and_heights(metadata):
     with pytest.raises(ValueError):
         Topo2GeoJsonFacesTransform().transform(
             _host(json.dumps(_with_geometry(cube_doc())), **metadata)
@@ -185,7 +181,6 @@ def test_cli_reports_unreadable_input(tmp_path, capsys):
     "args",
     [
         ["in.json", "--place-axes", ENU],  # no --crs
-        ["in.json", "--crs", CRS],  # no --place-axes
         ["in.json", "--crs", CRS, "--place-axes", ENU, "--features", "per-face"],
     ],
 )
@@ -198,7 +193,7 @@ def test_topo2jsonfg_cli_usage_errors_exit_2(args):
 @pytest.mark.parametrize(
     "args",
     [
-        ["in.json", "--heights", "ellipsoidal-geometry"],
+        ["in.json", "--heights", "ellipsoidal-geometry"],  # no axis order or CRS
         ["in.json", "--place-axes", "east-north-up"],
         [
             "in.json",
